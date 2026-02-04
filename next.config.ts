@@ -7,6 +7,10 @@ const nextConfig: NextConfig = {
         source: '/api/pacs/:path*',
         destination: 'http://localhost:8000/api/pacs/:path*',
       },
+      {
+        source: '/serie',
+        destination: 'http://localhost:8000/serie',
+      },
     ];
   },
 };
