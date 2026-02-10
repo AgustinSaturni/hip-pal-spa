@@ -93,12 +93,14 @@ export default function Home() {
   };
 
   const handleAnalyze = async () => {
-    if (!selectedSeries) return;
+    if (!selectedSeries || !selectedPatient) return;
 
     setIsAnalyzing(true);
     setAnalysisError(null);
 
     try {
+      const { nombre, apellido } = parsePatientName(selectedPatient.patient_name);
+
       const response = await fetch('/serie', {
         method: 'POST',
         headers: {
@@ -107,6 +109,9 @@ export default function Home() {
         },
         body: JSON.stringify({
           serie: selectedSeries.uuid,
+          patient_id: selectedPatient.patient_id,
+          nombre: nombre,
+          apellido: apellido,
         }),
       });
 
