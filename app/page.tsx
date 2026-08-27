@@ -17,7 +17,6 @@ export default function Home() {
   const [loadingSeries, setLoadingSeries] = useState(false);
   const [seriesError, setSeriesError] = useState<string | null>(null);
 
-  const [showModal, setShowModal] = useState(false);
   const [selectedSeries, setSelectedSeries] = useState<Series | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisSuccess, setAnalysisSuccess] = useState(false);
@@ -52,11 +51,17 @@ export default function Home() {
     }
   };
 
+  const [showSeriesModal, setShowSeriesModal] = useState(false);
+
   const handlePatientClick = async (patient: Patient) => {
     setSelectedPatient(patient);
     setLoadingSeries(true);
     setSeriesError(null);
     setSeries([]);
+    setShowSeriesModal(true);
+    setSelectedSeries(null);
+    setAnalysisSuccess(false);
+    setAnalysisError(null);
 
     try {
       const response = await fetch(`/api/pacs/patients/${patient.patient_id}/series`);
@@ -81,13 +86,19 @@ export default function Home() {
 
   const handleSeriesClick = (seriesItem: Series) => {
     setSelectedSeries(seriesItem);
-    setShowModal(true);
+    setAnalysisSuccess(false);
+    setAnalysisError(null);
   };
 
-  const handleCloseModal = () => {
-    setShowModal(false);
+  const handleBackToSeries = () => {
     setSelectedSeries(null);
-    setIsAnalyzing(false);
+    setAnalysisSuccess(false);
+    setAnalysisError(null);
+  };
+
+  const handleCloseSeriesModal = () => {
+    setShowSeriesModal(false);
+    setSelectedSeries(null);
     setAnalysisSuccess(false);
     setAnalysisError(null);
   };
@@ -133,9 +144,8 @@ export default function Home() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 py-8 px-4">
-      <div className="max-w-4xl mx-auto">
-        <h1 className="text-3xl font-bold text-gray-900 mb-8">Buscador de Pacientes</h1>
+    <div className="max-w-5xl mx-auto">
+      <h1 className="text-2xl font-bold text-gray-900 mb-6">Buscador de Pacientes</h1>
 
         {/* Filtros */}
         <div className="bg-white rounded-lg shadow p-6 mb-6">
@@ -257,137 +267,124 @@ export default function Home() {
           </div>
         )}
 
-        {/* Tabla de Series del Paciente */}
-        {selectedPatient && (
-          <div className="mt-8">
-            <div className="bg-white rounded-lg shadow p-6 mb-4">
-              <h2 className="text-2xl font-bold text-gray-900 mb-2">
-                Series del Paciente
-              </h2>
-              <p className="text-sm text-gray-600">
-                {parsePatientName(selectedPatient.patient_name).nombre}{' '}
-                {parsePatientName(selectedPatient.patient_name).apellido} (ID: {selectedPatient.patient_id})
-              </p>
-            </div>
-
-            {seriesError && (
-              <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded mb-6">
-                {seriesError}
-              </div>
-            )}
-
-            {loadingSeries ? (
-              <div className="bg-white rounded-lg shadow p-8 text-center">
-                <p className="text-gray-600">Cargando series...</p>
-              </div>
-            ) : (
-              <div className="bg-white rounded-lg shadow overflow-hidden">
-                <table className="min-w-full divide-y divide-gray-200">
-                  <thead className="bg-gray-50">
-                    <tr>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Serie #
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Descripción
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Modalidad
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        # Instancias
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="bg-white divide-y divide-gray-200">
-                    {series.length > 0 ? (
-                      series.map((seriesItem) => (
-                        <tr
-                          key={seriesItem.uuid}
-                          onClick={() => handleSeriesClick(seriesItem)}
-                          className="hover:bg-gray-50 cursor-pointer"
-                        >
-                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                            {seriesItem.series_number}
-                          </td>
-                          <td className="px-6 py-4 text-sm text-gray-900">
-                            {seriesItem.description}
-                          </td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                            {seriesItem.modality}
-                          </td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                            {seriesItem.num_instances}
-                          </td>
-                        </tr>
-                      ))
-                    ) : (
-                      <tr>
-                        <td colSpan={4} className="px-6 py-4 text-center text-sm text-gray-500">
-                          No se encontraron series para este paciente
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            )}
-
-            {series.length > 0 && (
-              <div className="mt-4 text-sm text-gray-600">
-                Total: {series.length} series
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Modal de confirmación */}
-        {showModal && selectedSeries && (
-          <div className="fixed inset-0 bg-black bg-opacity-20 flex items-center justify-center z-50">
-            <div className="bg-white rounded-lg shadow-xl p-6 max-w-md w-full mx-4">
-              {!analysisSuccess ? (
-                <>
-                  <h3 className="text-xl font-bold text-gray-900 mb-4">
-                    Confirmación de Análisis
-                  </h3>
-                  <p className="text-gray-700 mb-2">
-                    ¿Desea medir los ángulos de la serie seleccionada?
+        {/* Modal de Series del Paciente */}
+        {showSeriesModal && selectedPatient && (
+          <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
+            <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl mx-4 max-h-[80vh] flex flex-col">
+              {/* Header */}
+              <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+                <div>
+                  <h2 className="text-lg font-bold text-gray-900">
+                    {!selectedSeries ? 'Series del Paciente' : analysisSuccess ? 'Análisis Enviado' : 'Confirmar Análisis'}
+                  </h2>
+                  <p className="text-sm text-gray-500">
+                    {parsePatientName(selectedPatient.patient_name).nombre}{' '}
+                    {parsePatientName(selectedPatient.patient_name).apellido} (ID: {selectedPatient.patient_id})
                   </p>
-                  <div className="bg-gray-50 p-3 rounded mb-6">
-                    <p className="text-sm text-gray-600">
-                      <strong>Serie:</strong> {selectedSeries.series_number}
-                    </p>
-                    <p className="text-sm text-gray-600">
-                      <strong>Descripción:</strong> {selectedSeries.description}
-                    </p>
-                  </div>
+                </div>
+                <button
+                  onClick={handleCloseSeriesModal}
+                  className="p-1 text-gray-400 hover:text-gray-600 rounded"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
 
-                  {analysisError && (
-                    <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded mb-4 text-sm">
-                      {analysisError}
+              {/* Body */}
+              <div className="flex-1 overflow-y-auto">
+                {!selectedSeries ? (
+                  <>
+                    {seriesError && (
+                      <div className="mx-6 mt-4 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded text-sm">
+                        {seriesError}
+                      </div>
+                    )}
+
+                    {loadingSeries ? (
+                      <div className="p-8 text-center">
+                        <p className="text-gray-500">Cargando series...</p>
+                      </div>
+                    ) : (
+                      <table className="min-w-full divide-y divide-gray-200">
+                        <thead className="bg-gray-50">
+                          <tr>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                              Serie #
+                            </th>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                              Descripción
+                            </th>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                              Modalidad
+                            </th>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                              # Instancias
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody className="bg-white divide-y divide-gray-200">
+                          {series.length > 0 ? (
+                            series.map((seriesItem) => (
+                              <tr
+                                key={seriesItem.uuid}
+                                onClick={() => handleSeriesClick(seriesItem)}
+                                className="hover:bg-blue-50 cursor-pointer transition-colors"
+                              >
+                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                                  {seriesItem.series_number}
+                                </td>
+                                <td className="px-6 py-4 text-sm text-gray-900">
+                                  {seriesItem.description}
+                                </td>
+                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                                  {seriesItem.modality}
+                                </td>
+                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                                  {seriesItem.num_instances}
+                                </td>
+                              </tr>
+                            ))
+                          ) : (
+                            <tr>
+                              <td colSpan={4} className="px-6 py-4 text-center text-sm text-gray-500">
+                                No se encontraron series para este paciente
+                              </td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    )}
+                  </>
+                ) : !analysisSuccess ? (
+                  <div className="p-6">
+                    <p className="text-gray-700 mb-4">
+                      ¿Desea medir los ángulos de la serie seleccionada?
+                    </p>
+                    <div className="bg-gray-50 p-4 rounded-lg mb-6 space-y-1">
+                      <p className="text-sm text-gray-600">
+                        <strong>Serie:</strong> {selectedSeries.series_number}
+                      </p>
+                      <p className="text-sm text-gray-600">
+                        <strong>Descripción:</strong> {selectedSeries.description}
+                      </p>
+                      <p className="text-sm text-gray-600">
+                        <strong>Modalidad:</strong> {selectedSeries.modality}
+                      </p>
+                      <p className="text-sm text-gray-600">
+                        <strong>Instancias:</strong> {selectedSeries.num_instances}
+                      </p>
                     </div>
-                  )}
 
-                  <div className="flex gap-3 justify-end">
-                    <button
-                      onClick={handleCloseModal}
-                      disabled={isAnalyzing}
-                      className="px-6 py-2 border border-gray-300 rounded-md text-gray-700 font-medium hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-gray-500 disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      Cancelar
-                    </button>
-                    <button
-                      onClick={handleAnalyze}
-                      disabled={isAnalyzing}
-                      className="px-6 py-2 bg-blue-600 text-white font-medium rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      {isAnalyzing ? 'Procesando...' : 'Analizar'}
-                    </button>
+                    {analysisError && (
+                      <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded mb-4 text-sm">
+                        {analysisError}
+                      </div>
+                    )}
                   </div>
-                </>
-              ) : (
-                <>
-                  <div className="text-center mb-6">
+                ) : (
+                  <div className="p-6 text-center">
                     <div className="mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-green-100 mb-4">
                       <svg className="h-6 w-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" />
@@ -400,18 +397,56 @@ export default function Home() {
                       La tomografía está siendo procesada. Recibirás una notificación cuando esté lista.
                     </p>
                   </div>
-                  <button
-                    onClick={handleCloseModal}
-                    className="w-full px-6 py-2 bg-blue-600 text-white font-medium rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  >
-                    Cerrar
-                  </button>
-                </>
-              )}
+                )}
+              </div>
+
+              {/* Footer */}
+              <div className="px-6 py-3 border-t border-gray-200 flex items-center justify-between">
+                {!selectedSeries ? (
+                  <>
+                    <span className="text-sm text-gray-500">
+                      {series.length} {series.length === 1 ? 'serie' : 'series'}
+                    </span>
+                    <button
+                      onClick={handleCloseSeriesModal}
+                      className="px-4 py-2 text-sm border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
+                    >
+                      Cerrar
+                    </button>
+                  </>
+                ) : !analysisSuccess ? (
+                  <>
+                    <button
+                      onClick={handleBackToSeries}
+                      disabled={isAnalyzing}
+                      className="px-4 py-2 text-sm border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      Volver
+                    </button>
+                    <button
+                      onClick={handleAnalyze}
+                      disabled={isAnalyzing}
+                      className="px-4 py-2 text-sm bg-blue-600 text-white font-medium rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {isAnalyzing ? 'Procesando...' : 'Analizar'}
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <span />
+                    <button
+                      onClick={handleCloseSeriesModal}
+                      className="px-4 py-2 text-sm bg-blue-600 text-white font-medium rounded-md hover:bg-blue-700"
+                    >
+                      Cerrar
+                    </button>
+                  </>
+                )}
+              </div>
             </div>
           </div>
         )}
-      </div>
+
     </div>
   );
 }
