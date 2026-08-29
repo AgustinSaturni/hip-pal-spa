@@ -7,7 +7,7 @@ const menuItems = [
     section: 'Principal',
     items: [
       { label: 'Buscar Paciente', icon: SearchIcon, active: true },
-      { label: 'Mediciones', icon: ChartIcon, disabled: true },
+      { label: 'Mediciones', icon: ChartIcon, disabled: false },
       { label: 'Historial', icon: ClockIcon, disabled: true },
     ],
   },
