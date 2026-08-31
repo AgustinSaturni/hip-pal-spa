@@ -3,6 +3,46 @@
 import { useState } from 'react';
 import { Patient, SearchResponse, Series, SeriesResponse } from './types';
 
+const angleGroups = [
+  {
+    name: 'Plano Coronal',
+    angles: [
+      { id: 'aasa', label: 'AASA (Ángulo del Sector Acetabular Anterior)' },
+      { id: 'pasa', label: 'PASA (Ángulo del Sector Acetabular Posterior)' },
+      { id: 'hasa', label: 'HASA (Ángulo del Sector Acetabular Horizontal)' },
+      { id: 'centro_borde_lateral', label: 'Centro-Borde Lateral (Wiberg)' },
+      { id: 'inclinacion_acetabular', label: 'Inclinación Acetabular (Sharp/Tönnis)' },
+    ],
+  },
+  {
+    name: 'Plano Axial',
+    angles: [
+      { id: 'axial_proximal', label: 'AASA / PASA / HASA — Proximal' },
+      { id: 'axial_intermedio', label: 'AASA / PASA / HASA — Intermedio' },
+      { id: 'axial_ecuatorial', label: 'AASA / PASA / HASA — Ecuatorial' },
+    ],
+  },
+  {
+    name: 'Plano Sagital',
+    angles: [
+      { id: 'centro_borde_anterior', label: 'Centro-Borde Anterior' },
+    ],
+  },
+  {
+    name: 'Ángulo Alfa',
+    angles: [
+      { id: 'alfa_hora_12', label: 'Hora 12' },
+      { id: 'alfa_hora_1', label: 'Hora 1' },
+      { id: 'alfa_hora_2', label: 'Hora 2' },
+      { id: 'alfa_hora_3', label: 'Hora 3' },
+      { id: 'alfa_hora_4', label: 'Hora 4' },
+      { id: 'alfa_hora_5', label: 'Hora 5' },
+    ],
+  },
+];
+
+const allAngleIds = angleGroups.flatMap((g) => g.angles.map((a) => a.id));
+
 export default function Home() {
   const [searchName, setSearchName] = useState('');
   const [patients, setPatients] = useState<Patient[]>([]);
@@ -20,6 +60,7 @@ export default function Home() {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisSuccess, setAnalysisSuccess] = useState(false);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
+  const [selectedAngles, setSelectedAngles] = useState<string[]>([...allAngleIds]);
 
   const handleSearch = async () => {
     setLoading(true);
@@ -89,6 +130,23 @@ export default function Home() {
     setSelectedSeries(seriesItem);
     setAnalysisSuccess(false);
     setAnalysisError(null);
+    setSelectedAngles([...allAngleIds]);
+  };
+
+  const toggleAngle = (id: string) => {
+    setSelectedAngles((prev) =>
+      prev.includes(id) ? prev.filter((a) => a !== id) : [...prev, id]
+    );
+  };
+
+  const toggleGroup = (group: typeof angleGroups[number]) => {
+    const groupIds = group.angles.map((a) => a.id);
+    const allSelected = groupIds.every((id) => selectedAngles.includes(id));
+    if (allSelected) {
+      setSelectedAngles((prev) => prev.filter((id) => !groupIds.includes(id)));
+    } else {
+      setSelectedAngles((prev) => [...new Set([...prev, ...groupIds])]);
+    }
   };
 
   const handleBackToSeries = () => {
@@ -366,26 +424,65 @@ export default function Home() {
                   </>
                 ) : !analysisSuccess ? (
                   <div className="p-6">
-                    <p className="text-gray-700 mb-4">
-                      ¿Desea medir los ángulos de la serie seleccionada?
+                    {/* Serie info compacta */}
+                    <div className="flex items-center gap-3 mb-5 bg-blue-50 border border-blue-100 rounded-lg px-4 py-3">
+                      <div className="flex items-center justify-center w-10 h-10 bg-blue-100 rounded-lg shrink-0">
+                        <svg className="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909M3.75 21h16.5A2.25 2.25 0 0 0 22.5 18.75V5.25A2.25 2.25 0 0 0 20.25 3H3.75A2.25 2.25 0 0 0 1.5 5.25v13.5A2.25 2.25 0 0 0 3.75 21Z" />
+                        </svg>
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold text-gray-900 truncate">{selectedSeries.description}</p>
+                        <div className="flex gap-4 mt-0.5">
+                          <span className="text-xs text-gray-500">Serie #{selectedSeries.series_number}</span>
+                          <span className="text-xs text-gray-500">{selectedSeries.modality}</span>
+                          <span className="text-xs text-gray-500">{selectedSeries.num_instances} instancias</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Ángulos */}
+                    <p className="text-sm font-medium text-gray-700 mb-3">
+                      Seleccione los ángulos a medir:
                     </p>
-                    <div className="bg-gray-50 p-4 rounded-lg mb-6 space-y-1">
-                      <p className="text-sm text-gray-600">
-                        <strong>Serie:</strong> {selectedSeries.series_number}
-                      </p>
-                      <p className="text-sm text-gray-600">
-                        <strong>Descripción:</strong> {selectedSeries.description}
-                      </p>
-                      <p className="text-sm text-gray-600">
-                        <strong>Modalidad:</strong> {selectedSeries.modality}
-                      </p>
-                      <p className="text-sm text-gray-600">
-                        <strong>Instancias:</strong> {selectedSeries.num_instances}
-                      </p>
+
+                    <div className="grid grid-cols-2 gap-3 max-h-64 overflow-y-auto pr-1">
+                      {angleGroups.map((group) => {
+                        const groupIds = group.angles.map((a) => a.id);
+                        const allSelected = groupIds.every((id) => selectedAngles.includes(id));
+                        const someSelected = groupIds.some((id) => selectedAngles.includes(id));
+                        return (
+                          <div key={group.name} className="bg-gray-50 rounded-lg p-3">
+                            <label className="flex items-center gap-2 cursor-pointer mb-2">
+                              <input
+                                type="checkbox"
+                                checked={allSelected}
+                                ref={(el) => { if (el) el.indeterminate = someSelected && !allSelected; }}
+                                onChange={() => toggleGroup(group)}
+                                className="w-4 h-4 text-blue-600 rounded border-gray-300"
+                              />
+                              <span className="text-xs font-bold text-gray-800 uppercase tracking-wide">{group.name}</span>
+                            </label>
+                            <div className="ml-6 space-y-1">
+                              {group.angles.map((angle) => (
+                                <label key={angle.id} className="flex items-center gap-2 cursor-pointer">
+                                  <input
+                                    type="checkbox"
+                                    checked={selectedAngles.includes(angle.id)}
+                                    onChange={() => toggleAngle(angle.id)}
+                                    className="w-3.5 h-3.5 text-blue-600 rounded border-gray-300"
+                                  />
+                                  <span className="text-xs text-gray-600">{angle.label}</span>
+                                </label>
+                              ))}
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
 
                     {analysisError && (
-                      <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded mb-4 text-sm">
+                      <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded mt-4 text-sm">
                         {analysisError}
                       </div>
                     )}
@@ -432,10 +529,10 @@ export default function Home() {
                     </button>
                     <button
                       onClick={handleAnalyze}
-                      disabled={isAnalyzing}
+                      disabled={isAnalyzing || selectedAngles.length === 0}
                       className="px-4 py-2 text-sm bg-blue-600 text-white font-medium rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                      {isAnalyzing ? 'Procesando...' : 'Analizar'}
+                      {isAnalyzing ? 'Procesando...' : `Analizar (${selectedAngles.length})`}
                     </button>
                   </>
                 ) : (
