@@ -190,6 +190,7 @@ export default function Home() {
           patient_id: selectedPatient.patient_id,
           nombre: formatPatientName(selectedPatient.patient_name),
           apellido: '',
+          angulos: selectedAngles,
         }),
       });
 
