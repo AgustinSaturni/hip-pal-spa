@@ -189,7 +189,6 @@ export default function Home() {
           serie: selectedSeries.uuid,
           patient_id: selectedPatient.patient_id,
           nombre: formatPatientName(selectedPatient.patient_name),
-          apellido: '',
           angulos: selectedAngles,
         }),
       });
