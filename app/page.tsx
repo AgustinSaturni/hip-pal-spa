@@ -230,8 +230,6 @@ export default function Home() {
 
   return (
     <div className="max-w-5xl mx-auto">
-      <h1 className="text-2xl font-bold text-gray-900 mb-6">Buscador de Pacientes</h1>
-
         {/* Filtros */}
         <div className="bg-white rounded-lg shadow p-6 mb-6">
           <div className="flex gap-4 items-end">
