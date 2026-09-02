@@ -18,6 +18,10 @@ const nextConfig: NextConfig = {
         source: '/estudios/:path*',
         destination: `${API_URL}/estudios/:path*`,
       },
+      {
+        source: '/mediciones/:path*',
+        destination: `${API_URL}/mediciones/:path*`,
+      },
     ];
   },
 };

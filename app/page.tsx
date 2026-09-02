@@ -98,6 +98,12 @@ export default function Home() {
   const [loadingEstudios, setLoadingEstudios] = useState(false);
   const [estudiosError, setEstudiosError] = useState<string | null>(null);
 
+  const [showResultadosModal, setShowResultadosModal] = useState(false);
+  const [resultados, setResultados] = useState<any>(null);
+  const [loadingResultados, setLoadingResultados] = useState(false);
+  const [resultadosError, setResultadosError] = useState<string | null>(null);
+  const [resultadosEstudioId, setResultadosEstudioId] = useState<number | null>(null);
+
   const handlePatientClick = async (patient: Patient) => {
     setSelectedPatient(patient);
     setLoadingSeries(true);
@@ -180,6 +186,31 @@ export default function Home() {
   const handleCloseMedicionesModal = () => {
     setShowMedicionesModal(false);
     setMedicionesPatient(null);
+  };
+
+  const handleVerResultados = async (estudioId: number) => {
+    setResultadosEstudioId(estudioId);
+    setShowResultadosModal(true);
+    setLoadingResultados(true);
+    setResultadosError(null);
+    setResultados(null);
+
+    try {
+      const response = await fetch(`/mediciones/${estudioId}`);
+      if (!response.ok) throw new Error('No se encontraron resultados para este estudio');
+      const data = await response.json();
+      setResultados(data.resultados);
+    } catch (err) {
+      setResultadosError(err instanceof Error ? err.message : 'Error desconocido');
+    } finally {
+      setLoadingResultados(false);
+    }
+  };
+
+  const handleCloseResultadosModal = () => {
+    setShowResultadosModal(false);
+    setResultados(null);
+    setResultadosEstudioId(null);
   };
 
   const handleCloseSeriesModal = () => {
@@ -607,7 +638,7 @@ export default function Home() {
                     <thead className="bg-gray-50">
                       <tr>
                         <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
-                          ID
+                          Fecha
                         </th>
                         <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
                           Descripción
@@ -618,13 +649,16 @@ export default function Home() {
                         <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
                           Estado
                         </th>
+                        <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Resultados
+                        </th>
                       </tr>
                     </thead>
                     <tbody className="bg-white divide-y divide-gray-200">
                       {estudios.map((estudio) => (
                         <tr key={estudio.estudio_id} className="hover:bg-gray-50 transition-colors">
                           <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 text-center">
-                            {estudio.estudio_id}
+                            {estudio.created_at ? new Date(estudio.created_at).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '-'}
                           </td>
                           <td className="px-6 py-4 text-sm text-gray-900 text-center">
                             {estudio.descripcion || '-'}
@@ -641,6 +675,22 @@ export default function Home() {
                             }`}>
                               {estudio.estado}
                             </span>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-center">
+                            {estudio.estado === 'Finalizado' ? (
+                              <button
+                                onClick={() => handleVerResultados(estudio.estudio_id)}
+                                className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-md transition-colors"
+                                title="Ver resultados"
+                              >
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z" />
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+                                </svg>
+                              </button>
+                            ) : (
+                              <span className="text-gray-300">-</span>
+                            )}
                           </td>
                         </tr>
                       ))}
@@ -664,6 +714,205 @@ export default function Home() {
                 </span>
                 <button
                   onClick={handleCloseMedicionesModal}
+                  className="px-4 py-2 text-sm border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
+                >
+                  Cerrar
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Modal de Resultados de Medicion */}
+        {showResultadosModal && (
+          <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-[60]">
+            <div className="bg-white rounded-lg shadow-xl w-full max-w-3xl mx-4 max-h-[85vh] flex flex-col">
+              {/* Header */}
+              <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+                <div>
+                  <h2 className="text-lg font-bold text-gray-900">Resultados de Medicion</h2>
+                  <p className="text-sm text-gray-500">Estudio #{resultadosEstudioId}</p>
+                </div>
+                <button
+                  onClick={handleCloseResultadosModal}
+                  className="p-1 text-gray-400 hover:text-gray-600 rounded"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+
+              {/* Body */}
+              <div className="flex-1 overflow-y-auto p-6">
+                {loadingResultados ? (
+                  <div className="p-8 text-center">
+                    <p className="text-gray-500">Cargando resultados...</p>
+                  </div>
+                ) : resultadosError ? (
+                  <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded text-sm">
+                    {resultadosError}
+                  </div>
+                ) : resultados ? (
+                  <div className="space-y-6">
+                    {/* Angulos Coronales */}
+                    {resultados.angulos_coronales && (
+                      <div>
+                        <h3 className="text-sm font-bold text-gray-800 uppercase tracking-wide mb-3 flex items-center gap-2">
+                          <span className="w-2 h-2 bg-blue-500 rounded-full"></span>
+                          Plano Coronal
+                        </h3>
+                        <div className="bg-gray-50 rounded-lg overflow-hidden">
+                          <table className="min-w-full text-sm">
+                            <thead>
+                              <tr className="border-b border-gray-200">
+                                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">Angulo</th>
+                                <th className="px-4 py-2 text-center text-xs font-medium text-gray-500">Izq</th>
+                                <th className="px-4 py-2 text-center text-xs font-medium text-gray-500">Der</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-200">
+                              {resultados.angulos_coronales.centroBordeLateral && (
+                                <tr>
+                                  <td className="px-4 py-2 text-gray-700">Centro-Borde Lateral</td>
+                                  <td className="px-4 py-2 text-center text-gray-900 font-medium">{resultados.angulos_coronales.centroBordeLateral.izq}°</td>
+                                  <td className="px-4 py-2 text-center text-gray-900 font-medium">{resultados.angulos_coronales.centroBordeLateral.der}°</td>
+                                </tr>
+                              )}
+                              {resultados.angulos_coronales.inclinacionAcetabular && (
+                                <tr>
+                                  <td className="px-4 py-2 text-gray-700">Inclinacion Acetabular</td>
+                                  <td className="px-4 py-2 text-center text-gray-900 font-medium">{resultados.angulos_coronales.inclinacionAcetabular.izq}°</td>
+                                  <td className="px-4 py-2 text-center text-gray-900 font-medium">{resultados.angulos_coronales.inclinacionAcetabular.der}°</td>
+                                </tr>
+                              )}
+                              {resultados.angulos_coronales.CentroBorde && Object.entries(resultados.angulos_coronales.CentroBorde).map(([key, val]: [string, any]) => (
+                                <tr key={key}>
+                                  <td className="px-4 py-2 text-gray-700">{key}</td>
+                                  <td className="px-4 py-2 text-center text-gray-900 font-medium">{val.izq}°</td>
+                                  <td className="px-4 py-2 text-center text-gray-900 font-medium">{val.der}°</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Angulos Axiales */}
+                    {resultados.angulos_axiales && (
+                      <div>
+                        <h3 className="text-sm font-bold text-gray-800 uppercase tracking-wide mb-3 flex items-center gap-2">
+                          <span className="w-2 h-2 bg-green-500 rounded-full"></span>
+                          Plano Axial
+                        </h3>
+                        <div className="bg-gray-50 rounded-lg overflow-hidden">
+                          <table className="min-w-full text-sm">
+                            <thead>
+                              <tr className="border-b border-gray-200">
+                                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">Nivel</th>
+                                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">Angulo</th>
+                                <th className="px-4 py-2 text-center text-xs font-medium text-gray-500">Izq</th>
+                                <th className="px-4 py-2 text-center text-xs font-medium text-gray-500">Der</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-200">
+                              {Object.entries(resultados.angulos_axiales).map(([nivel, angulos]: [string, any]) =>
+                                Object.entries(angulos).map(([angulo, val]: [string, any], i) => (
+                                  <tr key={`${nivel}-${angulo}`}>
+                                    {i === 0 && (
+                                      <td className="px-4 py-2 text-gray-700 font-medium capitalize" rowSpan={Object.keys(angulos).length}>
+                                        {nivel}
+                                      </td>
+                                    )}
+                                    <td className="px-4 py-2 text-gray-700 uppercase">{angulo}</td>
+                                    <td className="px-4 py-2 text-center text-gray-900 font-medium">{val.izq}°</td>
+                                    <td className="px-4 py-2 text-center text-gray-900 font-medium">{val.der}°</td>
+                                  </tr>
+                                ))
+                              )}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Angulos Sagitales */}
+                    {resultados.angulos_sagitales && (
+                      <div>
+                        <h3 className="text-sm font-bold text-gray-800 uppercase tracking-wide mb-3 flex items-center gap-2">
+                          <span className="w-2 h-2 bg-purple-500 rounded-full"></span>
+                          Plano Sagital
+                        </h3>
+                        <div className="bg-gray-50 rounded-lg overflow-hidden">
+                          <table className="min-w-full text-sm">
+                            <thead>
+                              <tr className="border-b border-gray-200">
+                                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">Angulo</th>
+                                <th className="px-4 py-2 text-center text-xs font-medium text-gray-500">Izq</th>
+                                <th className="px-4 py-2 text-center text-xs font-medium text-gray-500">Der</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-200">
+                              {Object.entries(resultados.angulos_sagitales).map(([key, val]: [string, any]) => (
+                                <tr key={key}>
+                                  <td className="px-4 py-2 text-gray-700">{key === 'centro_borde_anterior' ? 'Centro-Borde Anterior' : key}</td>
+                                  <td className="px-4 py-2 text-center text-gray-900 font-medium">{val.izq}°</td>
+                                  <td className="px-4 py-2 text-center text-gray-900 font-medium">{val.der}°</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Angulo Alfa */}
+                    {resultados.angulos_alfa && (
+                      <div>
+                        <h3 className="text-sm font-bold text-gray-800 uppercase tracking-wide mb-3 flex items-center gap-2">
+                          <span className="w-2 h-2 bg-orange-500 rounded-full"></span>
+                          Angulo Alfa
+                        </h3>
+                        <div className="bg-gray-50 rounded-lg overflow-hidden">
+                          <table className="min-w-full text-sm">
+                            <thead>
+                              <tr className="border-b border-gray-200">
+                                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">Hora</th>
+                                <th className="px-4 py-2 text-center text-xs font-medium text-gray-500" colSpan={2}>Izq</th>
+                                <th className="px-4 py-2 text-center text-xs font-medium text-gray-500" colSpan={2}>Der</th>
+                              </tr>
+                              <tr className="border-b border-gray-200">
+                                <th></th>
+                                <th className="px-4 py-1 text-center text-xs text-gray-400">Ant</th>
+                                <th className="px-4 py-1 text-center text-xs text-gray-400">Post</th>
+                                <th className="px-4 py-1 text-center text-xs text-gray-400">Ant</th>
+                                <th className="px-4 py-1 text-center text-xs text-gray-400">Post</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-200">
+                              {Object.entries(resultados.angulos_alfa).map(([hora, val]: [string, any]) => (
+                                <tr key={hora}>
+                                  <td className="px-4 py-2 text-gray-700 capitalize">{hora.replace('_', ' ')}</td>
+                                  <td className="px-4 py-2 text-center text-gray-900 font-medium">{val.izq?.anterior}°</td>
+                                  <td className="px-4 py-2 text-center text-gray-900 font-medium">{val.izq?.posterior}°</td>
+                                  <td className="px-4 py-2 text-center text-gray-900 font-medium">{val.der?.anterior}°</td>
+                                  <td className="px-4 py-2 text-center text-gray-900 font-medium">{val.der?.posterior}°</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ) : null}
+              </div>
+
+              {/* Footer */}
+              <div className="px-6 py-3 border-t border-gray-200 flex justify-end">
+                <button
+                  onClick={handleCloseResultadosModal}
                   className="px-4 py-2 text-sm border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
                 >
                   Cerrar
