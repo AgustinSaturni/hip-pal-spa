@@ -7,9 +7,6 @@ const angleGroups = [
   {
     name: 'Plano Coronal',
     angles: [
-      { id: 'aasa', label: 'AASA (Ángulo del Sector Acetabular Anterior)' },
-      { id: 'pasa', label: 'PASA (Ángulo del Sector Acetabular Posterior)' },
-      { id: 'hasa', label: 'HASA (Ángulo del Sector Acetabular Horizontal)' },
       { id: 'centro_borde_lateral', label: 'Centro-Borde Lateral (Wiberg)' },
       { id: 'inclinacion_acetabular', label: 'Inclinación Acetabular (Sharp/Tönnis)' },
     ],
@@ -835,12 +832,6 @@ export default function Home() {
                                     </tr>
                                   </thead>
                                   <tbody className="divide-y divide-gray-200">
-                                    <tr>
-                                      <td className="px-4 py-2 text-gray-700">General (AASA / PASA)</td>
-                                      <td className="px-4 py-2 text-center text-gray-400">-</td>
-                                      <td className="px-4 py-2 text-center text-gray-400">-</td>
-                                      <td className="px-4 py-2 text-center"><OjoBtn clave="angulos_coronales_aasa_pasa" /></td>
-                                    </tr>
                                     {resultados.angulos_coronales.centroBordeLateral && (
                                       <tr>
                                         <td className="px-4 py-2 text-gray-700">Centro-Borde Lateral</td>
@@ -857,14 +848,6 @@ export default function Home() {
                                         <td className="px-4 py-2 text-center"><OjoBtn clave="inclinacion_acetabular" /></td>
                                       </tr>
                                     )}
-                                    {resultados.angulos_coronales.CentroBorde && Object.entries(resultados.angulos_coronales.CentroBorde).map(([key, val]: [string, any]) => (
-                                      <tr key={key}>
-                                        <td className="px-4 py-2 text-gray-700">{key}</td>
-                                        <td className="px-4 py-2 text-center text-gray-900 font-medium">{val.izq}°</td>
-                                        <td className="px-4 py-2 text-center text-gray-900 font-medium">{val.der}°</td>
-                                        <td className="px-4 py-2 text-center text-gray-400">-</td>
-                                      </tr>
-                                    ))}
                                   </tbody>
                                 </table>
                               </div>
