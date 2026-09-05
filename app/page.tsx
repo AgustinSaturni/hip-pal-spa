@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { Patient, SearchResponse, Series, SeriesResponse } from './types';
 
 const angleGroups = [
@@ -110,6 +110,21 @@ export default function Home() {
   const [imagenTablaValores, setImagenTablaValores] = useState<Array<{ label: string; der?: number | string; izq?: number | string }> | null>(null);
   const [imagenTabs, setImagenTabs] = useState<Array<{ clave: string; tabLabel: string; valor?: number | string }> | null>(null);
   const [activeTab, setActiveTab] = useState(0);
+
+  // Editor SVG interactivo de ángulos
+  const [editorOpen, setEditorOpen] = useState(false)
+  const [editorImageUrl, setEditorImageUrl] = useState<string | null>(null)
+  const [editorLoadingImage, setEditorLoadingImage] = useState(false)
+  const [editorLabel, setEditorLabel] = useState('')
+  const [editorNivel, setEditorNivel] = useState('')
+  const [editorPuntos, setEditorPuntos] = useState<Record<string, { x: number; y: number } | null>>({})
+  const [editorOriginalPuntos, setEditorOriginalPuntos] = useState<Record<string, { x: number; y: number } | null>>({})
+  const [editorAngulos, setEditorAngulos] = useState<{ aasa_der: number; aasa_izq: number; pasa_der: number; pasa_izq: number }>({ aasa_der: 0, aasa_izq: 0, pasa_der: 0, pasa_izq: 0 })
+  const [editorOriginalAngulos, setEditorOriginalAngulos] = useState<{ aasa_der: number; aasa_izq: number; pasa_der: number; pasa_izq: number }>({ aasa_der: 0, aasa_izq: 0, pasa_der: 0, pasa_izq: 0 })
+  const [editorDragging, setEditorDragging] = useState<string | null>(null)
+  const [savingEditor, setSavingEditor] = useState(false)
+  const [editorSaveError, setEditorSaveError] = useState<string | null>(null)
+  const svgRef = useRef<SVGSVGElement>(null)
 
   const handlePatientClick = async (patient: Patient) => {
     setSelectedPatient(patient);
@@ -312,6 +327,105 @@ export default function Home() {
     setImagenTabs(null);
     setActiveTab(0);
   };
+
+  // ---- Editor SVG ----
+  const computeAxialAngulos = (
+    puntos: Record<string, { x: number; y: number } | null>,
+    origPuntos: Record<string, { x: number; y: number } | null>,
+    origAngulos: { aasa_der: number; aasa_izq: number; pasa_der: number; pasa_izq: number }
+  ) => {
+    const result = { ...origAngulos }
+    const keys = ['aasa_der', 'aasa_izq', 'pasa_der', 'pasa_izq'] as const
+    for (const key of keys) {
+      const cKey = key.endsWith('_der') ? 'centroide_der' : 'centroide_izq'
+      const c = puntos[cKey]; const orig = origPuntos[key]; const curr = puntos[key]
+      if (!c || !orig || !curr) continue
+      const angOrig = Math.atan2(orig.y - c.y, orig.x - c.x) * 180 / Math.PI
+      const angCurr = Math.atan2(curr.y - c.y, curr.x - c.x) * 180 / Math.PI
+      let delta = angCurr - angOrig
+      while (delta > 180) delta -= 360
+      while (delta < -180) delta += 360
+      result[key] = Math.round((origAngulos[key] + delta) * 100) / 100
+    }
+    return result
+  }
+
+  const handleOpenEditor = async (nivel: string, imageKey: string) => {
+    if (!resultados?.angulos_axiales?.[nivel]?.puntos) return
+    const nivelData = resultados.angulos_axiales[nivel]
+    const puntos = nivelData.puntos as Record<string, { x: number; y: number } | null>
+    const angulos = {
+      aasa_der: nivelData.aasa?.der ?? 0,
+      aasa_izq: nivelData.aasa?.izq ?? 0,
+      pasa_der: nivelData.pasa?.der ?? 0,
+      pasa_izq: nivelData.pasa?.izq ?? 0,
+    }
+    setEditorNivel(nivel)
+    setEditorLabel(`Plano Axial — ${nivel.charAt(0).toUpperCase() + nivel.slice(1)}`)
+    setEditorPuntos(puntos)
+    setEditorOriginalPuntos(puntos)
+    setEditorAngulos(angulos)
+    setEditorOriginalAngulos(angulos)
+    setEditorOpen(true)
+    setEditorLoadingImage(true)
+    setEditorImageUrl(null)
+    setEditorSaveError(null)
+    try {
+      const clave = resultados.imagenes?.[imageKey]
+      if (!clave) throw new Error()
+      const res = await fetch(`/mediciones/${resultadosEstudioId}/imagen?clave=${encodeURIComponent(clave)}`)
+      const data = await res.json()
+      setEditorImageUrl(data.url)
+    } catch { setEditorImageUrl(null) }
+    finally { setEditorLoadingImage(false) }
+  }
+
+  const handleEditorPointMouseDown = (key: string, e: React.MouseEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setEditorDragging(key)
+  }
+
+  const handleEditorSvgMouseMove = (e: React.MouseEvent<SVGSVGElement>) => {
+    if (!editorDragging || !svgRef.current) return
+    const rect = svgRef.current.getBoundingClientRect()
+    const x = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width))
+    const y = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height))
+    const newPuntos = { ...editorPuntos, [editorDragging]: { x, y } }
+    setEditorPuntos(newPuntos)
+    setEditorAngulos(computeAxialAngulos(newPuntos, editorOriginalPuntos, editorOriginalAngulos))
+  }
+
+  const handleEditorSvgMouseUp = () => setEditorDragging(null)
+
+  const handleSaveEditor = async () => {
+    if (!resultados || !resultadosEstudioId) return
+    setSavingEditor(true)
+    setEditorSaveError(null)
+    const updated = JSON.parse(JSON.stringify(resultados))
+    const nivel = updated.angulos_axiales[editorNivel]
+    nivel.aasa.der = editorAngulos.aasa_der
+    nivel.aasa.izq = editorAngulos.aasa_izq
+    nivel.pasa.der = editorAngulos.pasa_der
+    nivel.pasa.izq = editorAngulos.pasa_izq
+    nivel.hasa.der = Math.round((editorAngulos.aasa_der + editorAngulos.pasa_der) * 100) / 100
+    nivel.hasa.izq = Math.round((editorAngulos.aasa_izq + editorAngulos.pasa_izq) * 100) / 100
+    nivel.puntos = editorPuntos
+    try {
+      const res = await fetch(`/mediciones/${resultadosEstudioId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ resultados: updated }),
+      })
+      if (!res.ok) throw new Error('Error al guardar')
+      setResultados(updated)
+      setEditorOpen(false)
+    } catch (err) {
+      setEditorSaveError(err instanceof Error ? err.message : 'Error al guardar')
+    } finally {
+      setSavingEditor(false)
+    }
+  }
 
   const handleCloseSeriesModal = () => {
     setShowSeriesModal(false);
@@ -1130,11 +1244,13 @@ export default function Home() {
                                   </thead>
                                   <tbody className="divide-y divide-gray-200">
                                     {(['proximal', 'intermedio', 'ecuatorial'] as const).filter(n => resultados.angulos_axiales[n]).flatMap((nivel) => {
-                                      const angulos: any = resultados.angulos_axiales[nivel];
-                                      return Object.entries(angulos).map(([angulo, val]: [string, any], i) => (
+                                      const nivelData: any = resultados.angulos_axiales[nivel];
+                                      const angleEntries = Object.entries(nivelData).filter(([k]) => k !== 'puntos') as [string, any][];
+                                      const hasPuntos = !!nivelData.puntos;
+                                      return angleEntries.map(([angulo, val]: [string, any], i) => (
                                         <tr key={`${nivel}-${angulo}`}>
                                           {i === 0 && (
-                                            <td className="px-4 py-2 text-gray-700 font-medium capitalize align-middle" rowSpan={Object.keys(angulos).length}>
+                                            <td className="px-4 py-2 text-gray-700 font-medium capitalize align-middle" rowSpan={angleEntries.length}>
                                               {nivel}
                                             </td>
                                           )}
@@ -1142,16 +1258,29 @@ export default function Home() {
                                           <td className="px-4 py-2 text-center text-gray-900 font-medium">{val.izq}°</td>
                                           <td className="px-4 py-2 text-center text-gray-900 font-medium">{val.der}°</td>
                                           {i === 0 ? (
-                                            <td className="px-4 py-2 text-center align-middle" rowSpan={Object.keys(angulos).length}>
-                                              <OjoBtnTabla
-                                                clave={`angulos_axiales_${nivel}_aasa_pasa`}
-                                                label={`Plano Axial — ${nivel}`}
-                                                tabla={Object.entries(angulos).map(([ang, v]: [string, any]) => ({
-                                                  label: ang.toUpperCase(),
-                                                  der: v.der,
-                                                  izq: v.izq,
-                                                }))}
-                                              />
+                                            <td className="px-4 py-2 text-center align-middle" rowSpan={angleEntries.length}>
+                                              <div className="flex items-center justify-center gap-1">
+                                                <OjoBtnTabla
+                                                  clave={`angulos_axiales_${nivel}_aasa_pasa`}
+                                                  label={`Plano Axial — ${nivel}`}
+                                                  tabla={angleEntries.map(([ang, v]: [string, any]) => ({
+                                                    label: ang.toUpperCase(),
+                                                    der: v.der,
+                                                    izq: v.izq,
+                                                  }))}
+                                                />
+                                                {hasPuntos && (
+                                                  <button
+                                                    onClick={() => handleOpenEditor(nivel, `angulos_axiales_${nivel}_aasa_pasa`)}
+                                                    className="p-1 text-gray-300 hover:text-amber-500 transition-colors"
+                                                    title="Corregir ángulos"
+                                                  >
+                                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                                                      <path strokeLinecap="round" strokeLinejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125" />
+                                                    </svg>
+                                                  </button>
+                                                )}
+                                              </div>
                                             </td>
                                           ) : null}
                                         </tr>
@@ -1269,6 +1398,198 @@ export default function Home() {
                 >
                   Cerrar
                 </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Editor SVG de ángulos */}
+        {editorOpen && (
+          <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-[90]">
+            <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl mx-4 flex flex-col overflow-hidden max-h-[95vh]">
+              {/* Header */}
+              <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
+                <div>
+                  <p className="text-xs font-semibold text-amber-600 uppercase tracking-wider mb-0.5">Corrección Manual</p>
+                  <h3 className="text-base font-bold text-gray-900">{editorLabel}</h3>
+                </div>
+                <button onClick={() => setEditorOpen(false)} className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg">
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+
+              {/* Angle values panel */}
+              <div className="px-5 py-3 bg-gray-50 border-b border-gray-100 flex gap-6 flex-wrap">
+                {[
+                  { key: 'aasa_der', label: 'AASA Der', color: 'text-red-600' },
+                  { key: 'pasa_der', label: 'PASA Der', color: 'text-blue-600' },
+                  { key: 'aasa_izq', label: 'AASA Izq', color: 'text-red-600' },
+                  { key: 'pasa_izq', label: 'PASA Izq', color: 'text-blue-600' },
+                ].map(({ key, label, color }) => (
+                  <div key={key} className="text-center">
+                    <p className={`text-xs font-medium ${color} uppercase tracking-wide`}>{label}</p>
+                    <p className="text-xl font-bold text-gray-900">{editorAngulos[key as keyof typeof editorAngulos]}°</p>
+                  </div>
+                ))}
+                <div className="text-center ml-4 pl-4 border-l border-gray-200">
+                  <p className="text-xs font-medium text-gray-400 uppercase tracking-wide">HASA Der</p>
+                  <p className="text-xl font-bold text-gray-500">{Math.round((editorAngulos.aasa_der + editorAngulos.pasa_der) * 100) / 100}°</p>
+                </div>
+                <div className="text-center">
+                  <p className="text-xs font-medium text-gray-400 uppercase tracking-wide">HASA Izq</p>
+                  <p className="text-xl font-bold text-gray-500">{Math.round((editorAngulos.aasa_izq + editorAngulos.pasa_izq) * 100) / 100}°</p>
+                </div>
+              </div>
+
+              {/* Image + SVG overlay */}
+              <div className="flex-1 overflow-hidden bg-black relative flex items-center justify-center" style={{ minHeight: 300 }}>
+                {editorLoadingImage ? (
+                  <div className="flex items-center justify-center h-64">
+                    <svg className="animate-spin h-8 w-8 text-white" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                    </svg>
+                  </div>
+                ) : editorImageUrl ? (
+                  <div className="relative w-full h-full flex items-center justify-center">
+                    {/* We use a container that takes the image's natural aspect ratio */}
+                    <div className="relative" style={{ maxHeight: '60vh', maxWidth: '100%' }}>
+                      <img
+                        src={editorImageUrl}
+                        alt={editorLabel}
+                        className="block max-h-[60vh] max-w-full object-contain select-none"
+                        draggable={false}
+                      />
+                      {/* SVG overlay — covers exactly the img element */}
+                      <svg
+                        ref={svgRef}
+                        className="absolute inset-0 w-full h-full"
+                        viewBox="0 0 100 100"
+                        preserveAspectRatio="none"
+                        style={{ cursor: editorDragging ? 'grabbing' : 'default' }}
+                        onMouseMove={handleEditorSvgMouseMove}
+                        onMouseUp={handleEditorSvgMouseUp}
+                        onMouseLeave={handleEditorSvgMouseUp}
+                      >
+                        {/* Centroid circles (fixed) */}
+                        {(['centroide_der', 'centroide_izq'] as const).map(key => {
+                          const p = editorPuntos[key]
+                          const r = (typeof editorPuntos[key === 'centroide_der' ? 'radio_der' : 'radio_izq'] === 'number'
+                            ? (editorPuntos[key === 'centroide_der' ? 'radio_der' : 'radio_izq'] as unknown as number) * 100
+                            : 5)
+                          if (!p) return null
+                          return (
+                            <circle
+                              key={key}
+                              cx={p.x * 100}
+                              cy={p.y * 100}
+                              r={r}
+                              fill="none"
+                              stroke="#22c55e"
+                              strokeWidth="0.5"
+                              opacity="0.7"
+                            />
+                          )
+                        })}
+
+                        {/* Lines: centroid → endpoint */}
+                        {[
+                          { ptKey: 'aasa_der', cKey: 'centroide_der', color: '#ef4444' },
+                          { ptKey: 'pasa_der', cKey: 'centroide_der', color: '#3b82f6' },
+                          { ptKey: 'aasa_izq', cKey: 'centroide_izq', color: '#ef4444' },
+                          { ptKey: 'pasa_izq', cKey: 'centroide_izq', color: '#3b82f6' },
+                        ].map(({ ptKey, cKey, color }) => {
+                          const c = editorPuntos[cKey]
+                          const p = editorPuntos[ptKey]
+                          if (!c || !p) return null
+                          return (
+                            <line
+                              key={ptKey}
+                              x1={c.x * 100} y1={c.y * 100}
+                              x2={p.x * 100} y2={p.y * 100}
+                              stroke={color}
+                              strokeWidth="0.6"
+                              opacity="0.9"
+                            />
+                          )
+                        })}
+
+                        {/* Centroid dots */}
+                        {(['centroide_der', 'centroide_izq'] as const).map(key => {
+                          const p = editorPuntos[key]
+                          if (!p) return null
+                          return <circle key={`dot-${key}`} cx={p.x * 100} cy={p.y * 100} r="0.8" fill="#22c55e" opacity="0.9" />
+                        })}
+
+                        {/* Draggable endpoint circles */}
+                        {[
+                          { key: 'aasa_der', color: '#ef4444' },
+                          { key: 'pasa_der', color: '#3b82f6' },
+                          { key: 'aasa_izq', color: '#ef4444' },
+                          { key: 'pasa_izq', color: '#3b82f6' },
+                        ].map(({ key, color }) => {
+                          const p = editorPuntos[key]
+                          if (!p) return null
+                          const isDragging = editorDragging === key
+                          return (
+                            <circle
+                              key={key}
+                              cx={p.x * 100}
+                              cy={p.y * 100}
+                              r={isDragging ? '1.8' : '1.4'}
+                              fill={color}
+                              stroke="white"
+                              strokeWidth="0.4"
+                              opacity="0.95"
+                              style={{ cursor: isDragging ? 'grabbing' : 'grab' }}
+                              onMouseDown={(e) => handleEditorPointMouseDown(key, e)}
+                            />
+                          )
+                        })}
+                      </svg>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-gray-400 text-sm">No se pudo cargar la imagen</p>
+                )}
+              </div>
+
+              {/* Legend */}
+              <div className="px-5 py-2 bg-gray-50 border-t border-gray-100 flex gap-4 text-xs text-gray-500">
+                <span className="flex items-center gap-1.5"><span className="w-3 h-0.5 bg-red-500 inline-block"></span>AASA</span>
+                <span className="flex items-center gap-1.5"><span className="w-3 h-0.5 bg-blue-500 inline-block"></span>PASA</span>
+                <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full border border-green-500 inline-block"></span>Centroide (cabeza femoral)</span>
+                <span className="ml-2 text-gray-400">Arrastrá los puntos de color para ajustar las líneas</span>
+              </div>
+
+              {/* Footer */}
+              <div className="px-5 py-3 border-t border-gray-100 flex items-center justify-between">
+                <div>
+                  {editorSaveError && <p className="text-sm text-red-600">{editorSaveError}</p>}
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => { setEditorPuntos(editorOriginalPuntos); setEditorAngulos(editorOriginalAngulos); }}
+                    className="px-4 py-2 text-sm border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
+                  >
+                    Restablecer
+                  </button>
+                  <button
+                    onClick={() => setEditorOpen(false)}
+                    className="px-4 py-2 text-sm border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    onClick={handleSaveEditor}
+                    disabled={savingEditor}
+                    className="px-4 py-2 text-sm bg-amber-500 text-white font-medium rounded-md hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {savingEditor ? 'Guardando...' : 'Guardar corrección'}
+                  </button>
+                </div>
               </div>
             </div>
           </div>
