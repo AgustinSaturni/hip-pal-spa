@@ -1444,7 +1444,7 @@ export default function Home() {
               </div>
 
               {/* Image + SVG overlay */}
-              <div className="flex-1 overflow-hidden bg-black relative flex items-center justify-center" style={{ minHeight: 300 }}>
+              <div className="flex-1 bg-black flex items-center justify-center" style={{ minHeight: 400 }}>
                 {editorLoadingImage ? (
                   <div className="flex items-center justify-center h-64">
                     <svg className="animate-spin h-8 w-8 text-white" fill="none" viewBox="0 0 24 24">
@@ -1453,22 +1453,28 @@ export default function Home() {
                     </svg>
                   </div>
                 ) : editorImageUrl ? (
-                  <div className="relative w-full h-full flex items-center justify-center">
-                    {/* We use a container that takes the image's natural aspect ratio */}
-                    <div className="relative" style={{ maxHeight: '60vh', maxWidth: '100%' }}>
+                  <div className="w-full h-full flex items-center justify-center overflow-hidden">
+                    {/* CSS grid stacks img + SVG in the same cell — guaranteed pixel-perfect overlay */}
+                    <div style={{ display: 'grid', maxHeight: '75vh', maxWidth: '100%' }}>
                       <img
                         src={editorImageUrl}
                         alt={editorLabel}
-                        className="block max-h-[60vh] max-w-full object-contain select-none"
+                        style={{ gridArea: '1/1', display: 'block', maxHeight: '75vh', maxWidth: '100%' }}
                         draggable={false}
+                        onLoad={(e) => {
+                          const img = e.currentTarget
+                          console.log('=== Editor Debug ===')
+                          console.log('naturalWidth:', img.naturalWidth, 'naturalHeight:', img.naturalHeight)
+                          console.log('clientWidth:', img.clientWidth, 'clientHeight:', img.clientHeight)
+                          console.log('puntos:', JSON.stringify(editorPuntos, null, 2))
+                        }}
                       />
-                      {/* SVG overlay — covers exactly the img element */}
+                      {/* SVG overlay — CSS grid guarantees it covers exactly the img */}
                       <svg
                         ref={svgRef}
-                        className="absolute inset-0 w-full h-full"
+                        style={{ gridArea: '1/1', width: '100%', height: '100%', cursor: editorDragging ? 'grabbing' : 'default' }}
                         viewBox="0 0 100 100"
                         preserveAspectRatio="none"
-                        style={{ cursor: editorDragging ? 'grabbing' : 'default' }}
                         onMouseMove={handleEditorSvgMouseMove}
                         onMouseUp={handleEditorSvgMouseUp}
                         onMouseLeave={handleEditorSvgMouseUp}
