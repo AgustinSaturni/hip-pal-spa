@@ -105,6 +105,7 @@ export default function Home() {
   const [loadingImagen, setLoadingImagen] = useState(false);
   const [imagenLabel, setImagenLabel] = useState<string>('');
   const [imagenValores, setImagenValores] = useState<{ izq?: number | string; der?: number | string } | null>(null);
+  const [imagenTablaValores, setImagenTablaValores] = useState<Array<{ label: string; der?: number | string; izq?: number | string }> | null>(null);
   const [imagenTabs, setImagenTabs] = useState<Array<{ clave: string; tabLabel: string; valor?: number | string }> | null>(null);
   const [activeTab, setActiveTab] = useState(0);
 
@@ -218,15 +219,17 @@ export default function Home() {
     setImagenUrl(null);
     setImagenLabel('');
     setImagenValores(null);
+    setImagenTablaValores(null);
     setImagenTabs(null);
     setActiveTab(0);
   };
 
-  const handleVerImagen = async (clave: string, label: string, valores?: { izq?: number | string; der?: number | string }) => {
+  const handleVerImagen = async (clave: string, label: string, valores?: { izq?: number | string; der?: number | string }, tablaValores?: Array<{ label: string; der?: number | string; izq?: number | string }>) => {
     setLoadingImagen(true);
     setImagenUrl(null);
     setImagenLabel(label);
     setImagenValores(valores ?? null);
+    setImagenTablaValores(tablaValores ?? null);
     try {
       const response = await fetch(`/mediciones/${resultadosEstudioId}/imagen?clave=${encodeURIComponent(clave)}`);
       if (!response.ok) throw new Error('No se pudo obtener la imagen');
@@ -288,6 +291,7 @@ export default function Home() {
     setImagenUrl(null);
     setImagenLabel('');
     setImagenValores(null);
+    setImagenTablaValores(null);
     setImagenTabs(null);
     setActiveTab(0);
   };
@@ -855,8 +859,29 @@ export default function Home() {
                             </button>
                           </div>
 
-                          {/* Tabs o Valores */}
-                          {imagenTabs && imagenTabs.length > 1 ? (
+                          {/* Tabs, Tabla, o Valores simples */}
+                          {imagenTablaValores ? (
+                            <div className="bg-gray-50 border-b border-gray-100 px-4 py-3">
+                              <table className="w-full text-sm">
+                                <thead>
+                                  <tr>
+                                    <th className="text-left text-xs text-gray-400 uppercase tracking-wide pb-2 font-medium">Ángulo</th>
+                                    <th className="text-center text-xs text-gray-400 uppercase tracking-wide pb-2 font-medium">Derecho</th>
+                                    <th className="text-center text-xs text-gray-400 uppercase tracking-wide pb-2 font-medium">Izquierdo</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-gray-200">
+                                  {imagenTablaValores.map((row) => (
+                                    <tr key={row.label}>
+                                      <td className="py-1.5 text-gray-600 font-medium">{row.label}</td>
+                                      <td className="py-1.5 text-center text-gray-900 font-bold">{row.der !== undefined ? `${row.der}°` : '—'}</td>
+                                      <td className="py-1.5 text-center text-gray-900 font-bold">{row.izq !== undefined ? `${row.izq}°` : '—'}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          ) : imagenTabs && imagenTabs.length > 1 ? (
                             <div className="flex border-b border-gray-100">
                               {imagenTabs.map((tab, i) => (
                                 <button
@@ -943,6 +968,20 @@ export default function Home() {
                         );
                       };
 
+                      const OjoBtnTabla = ({ clave, label, tabla }: { clave: string; label: string; tabla: Array<{ label: string; der?: number | string; izq?: number | string }> }) => {
+                        const tiene = resultados.imagenes && resultados.imagenes[clave];
+                        if (!tiene) return null;
+                        return (
+                          <button
+                            onClick={() => handleVerImagen(resultados.imagenes[clave], label, undefined, tabla)}
+                            className="p-1 text-gray-300 hover:text-blue-500 transition-colors"
+                            title="Ver imagen"
+                          >
+                            {eyeIcon}
+                          </button>
+                        );
+                      };
+
                       const OjoBtnTabs = ({ label, tabs }: { label: string; tabs: Array<{ clave: string; tabLabel: string; valor?: number | string }> }) => {
                         const tieneAlguna = tabs.some(t => resultados.imagenes && resultados.imagenes[t.clave]);
                         if (!tieneAlguna) return null;
@@ -1018,8 +1057,9 @@ export default function Home() {
                                     </tr>
                                   </thead>
                                   <tbody className="divide-y divide-gray-200">
-                                    {Object.entries(resultados.angulos_axiales).map(([nivel, angulos]: [string, any]) =>
-                                      Object.entries(angulos).map(([angulo, val]: [string, any], i) => (
+                                    {(['proximal', 'intermedio', 'ecuatorial'] as const).filter(n => resultados.angulos_axiales[n]).flatMap((nivel) => {
+                                      const angulos: any = resultados.angulos_axiales[nivel];
+                                      return Object.entries(angulos).map(([angulo, val]: [string, any], i) => (
                                         <tr key={`${nivel}-${angulo}`}>
                                           {i === 0 && (
                                             <td className="px-4 py-2 text-gray-700 font-medium capitalize align-middle" rowSpan={Object.keys(angulos).length}>
@@ -1031,12 +1071,20 @@ export default function Home() {
                                           <td className="px-4 py-2 text-center text-gray-900 font-medium">{val.der}°</td>
                                           {i === 0 ? (
                                             <td className="px-4 py-2 text-center align-middle" rowSpan={Object.keys(angulos).length}>
-                                              <OjoBtn clave={`angulos_axiales_${nivel}_aasa_pasa`} label={`Plano Axial — ${nivel}`} />
+                                              <OjoBtnTabla
+                                                clave={`angulos_axiales_${nivel}_aasa_pasa`}
+                                                label={`Plano Axial — ${nivel}`}
+                                                tabla={Object.entries(angulos).map(([ang, v]: [string, any]) => ({
+                                                  label: ang.toUpperCase(),
+                                                  der: v.der,
+                                                  izq: v.izq,
+                                                }))}
+                                              />
                                             </td>
                                           ) : null}
                                         </tr>
-                                      ))
-                                    )}
+                                      ));
+                                    })}
                                   </tbody>
                                 </table>
                               </div>
