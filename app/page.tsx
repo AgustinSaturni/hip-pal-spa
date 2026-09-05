@@ -94,6 +94,8 @@ export default function Home() {
   const [estudios, setEstudios] = useState<any[]>([]);
   const [loadingEstudios, setLoadingEstudios] = useState(false);
   const [estudiosError, setEstudiosError] = useState<string | null>(null);
+  const [deletingEstudioId, setDeletingEstudioId] = useState<number | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
 
   const [showResultadosModal, setShowResultadosModal] = useState(false);
   const [resultados, setResultados] = useState<any>(null);
@@ -191,6 +193,21 @@ export default function Home() {
   const handleCloseMedicionesModal = () => {
     setShowMedicionesModal(false);
     setMedicionesPatient(null);
+    setConfirmDeleteId(null);
+  };
+
+  const handleDeleteEstudio = async (estudioId: number) => {
+    setDeletingEstudioId(estudioId);
+    setConfirmDeleteId(null);
+    try {
+      const response = await fetch(`/estudios/${estudioId}`, { method: 'DELETE' });
+      if (!response.ok) throw new Error('Error al eliminar el estudio');
+      setEstudios(prev => prev.filter(e => e.estudio_id !== estudioId));
+    } catch (err) {
+      setEstudiosError(err instanceof Error ? err.message : 'Error desconocido');
+    } finally {
+      setDeletingEstudioId(null);
+    }
   };
 
   const handleVerResultados = async (estudioId: number) => {
@@ -581,32 +598,25 @@ export default function Home() {
                       {angleGroups.map((group) => {
                         const groupIds = group.angles.map((a) => a.id);
                         const allSelected = groupIds.every((id) => selectedAngles.includes(id));
-                        const someSelected = groupIds.some((id) => selectedAngles.includes(id));
                         return (
                           <div key={group.name} className="bg-gray-50 rounded-lg p-3">
                             <label className="flex items-center gap-2 cursor-pointer mb-2">
                               <input
                                 type="checkbox"
                                 checked={allSelected}
-                                ref={(el) => { if (el) el.indeterminate = someSelected && !allSelected; }}
                                 onChange={() => toggleGroup(group)}
                                 className="w-4 h-4 text-blue-600 rounded border-gray-300"
                               />
                               <span className="text-xs font-bold text-gray-800 uppercase tracking-wide">{group.name}</span>
                             </label>
-                            <div className="ml-6 space-y-1">
+                            <ul className="ml-6 space-y-1">
                               {group.angles.map((angle) => (
-                                <label key={angle.id} className="flex items-center gap-2 cursor-pointer">
-                                  <input
-                                    type="checkbox"
-                                    checked={selectedAngles.includes(angle.id)}
-                                    onChange={() => toggleAngle(angle.id)}
-                                    className="w-3.5 h-3.5 text-blue-600 rounded border-gray-300"
-                                  />
-                                  <span className="text-xs text-gray-600">{angle.label}</span>
-                                </label>
+                                <li key={angle.id} className="flex items-center gap-1.5">
+                                  <span className="w-1 h-1 rounded-full bg-gray-400 shrink-0"></span>
+                                  <span className="text-xs text-gray-500">{angle.label}</span>
+                                </li>
                               ))}
-                            </div>
+                            </ul>
                           </div>
                         );
                       })}
@@ -660,10 +670,10 @@ export default function Home() {
                     </button>
                     <button
                       onClick={handleAnalyze}
-                      disabled={isAnalyzing || selectedAngles.length === 0}
+                      disabled={isAnalyzing || selectedAngles.length === 0 || angleGroups.every(g => !g.angles.some(a => selectedAngles.includes(a.id)))}
                       className="px-4 py-2 text-sm bg-blue-600 text-white font-medium rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                      {isAnalyzing ? 'Procesando...' : `Analizar (${selectedAngles.length})`}
+                      {isAnalyzing ? 'Procesando...' : `Analizar (${angleGroups.filter(g => g.angles.every(a => selectedAngles.includes(a.id))).length} secciones)`}
                     </button>
                   </>
                 ) : (
@@ -685,7 +695,7 @@ export default function Home() {
         {/* Modal de Mediciones del Paciente */}
         {showMedicionesModal && medicionesPatient && (
           <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
-            <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl mx-4 max-h-[80vh] flex flex-col">
+            <div className="bg-white rounded-lg shadow-xl w-full max-w-4xl mx-4 max-h-[80vh] flex flex-col relative">
               {/* Header */}
               <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
                 <div>
@@ -735,6 +745,9 @@ export default function Home() {
                         <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
                           Resultados
                         </th>
+                        <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Eliminar
+                        </th>
                       </tr>
                     </thead>
                     <tbody className="bg-white divide-y divide-gray-200">
@@ -775,6 +788,27 @@ export default function Home() {
                               <span className="text-gray-300">-</span>
                             )}
                           </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-center">
+                            {estudio.estado !== 'Procesando' && (
+                              <button
+                                onClick={() => setConfirmDeleteId(estudio.estudio_id)}
+                                disabled={deletingEstudioId === estudio.estudio_id}
+                                className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors disabled:opacity-50"
+                                title="Eliminar estudio"
+                              >
+                                {deletingEstudioId === estudio.estudio_id ? (
+                                  <svg className="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24">
+                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                                  </svg>
+                                ) : (
+                                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" />
+                                  </svg>
+                                )}
+                              </button>
+                            )}
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -802,6 +836,44 @@ export default function Home() {
                   Cerrar
                 </button>
               </div>
+
+              {/* Modal de confirmación de borrado */}
+              {confirmDeleteId !== null && (
+                <div className="absolute inset-0 bg-black/40 flex items-center justify-center rounded-lg z-10">
+                  <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm mx-6 overflow-hidden">
+                    <div className="px-6 py-5">
+                      <div className="flex items-center gap-3 mb-3">
+                        <div className="flex items-center justify-center w-10 h-10 bg-red-100 rounded-full shrink-0">
+                          <svg className="w-5 h-5 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" />
+                          </svg>
+                        </div>
+                        <div>
+                          <h3 className="text-base font-bold text-gray-900">Eliminar estudio</h3>
+                          <p className="text-sm text-gray-500">Estudio #{confirmDeleteId}</p>
+                        </div>
+                      </div>
+                      <p className="text-sm text-gray-600">
+                        Esta acción eliminará el estudio, sus mediciones e imágenes permanentemente. No se puede deshacer.
+                      </p>
+                    </div>
+                    <div className="px-6 pb-5 flex justify-end gap-2">
+                      <button
+                        onClick={() => setConfirmDeleteId(null)}
+                        className="px-4 py-2 text-sm border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
+                      >
+                        Cancelar
+                      </button>
+                      <button
+                        onClick={() => handleDeleteEstudio(confirmDeleteId)}
+                        className="px-4 py-2 text-sm bg-red-600 text-white font-medium rounded-md hover:bg-red-700"
+                      >
+                        Eliminar
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         )}
