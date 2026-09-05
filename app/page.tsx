@@ -103,6 +103,10 @@ export default function Home() {
 
   const [imagenUrl, setImagenUrl] = useState<string | null>(null);
   const [loadingImagen, setLoadingImagen] = useState(false);
+  const [imagenLabel, setImagenLabel] = useState<string>('');
+  const [imagenValores, setImagenValores] = useState<{ izq?: number | string; der?: number | string } | null>(null);
+  const [imagenTabs, setImagenTabs] = useState<Array<{ clave: string; tabLabel: string; valor?: number | string }> | null>(null);
+  const [activeTab, setActiveTab] = useState(0);
 
   const handlePatientClick = async (patient: Patient) => {
     setSelectedPatient(patient);
@@ -212,11 +216,17 @@ export default function Home() {
     setResultados(null);
     setResultadosEstudioId(null);
     setImagenUrl(null);
+    setImagenLabel('');
+    setImagenValores(null);
+    setImagenTabs(null);
+    setActiveTab(0);
   };
 
-  const handleVerImagen = async (clave: string) => {
+  const handleVerImagen = async (clave: string, label: string, valores?: { izq?: number | string; der?: number | string }) => {
     setLoadingImagen(true);
     setImagenUrl(null);
+    setImagenLabel(label);
+    setImagenValores(valores ?? null);
     try {
       const response = await fetch(`/mediciones/${resultadosEstudioId}/imagen?clave=${encodeURIComponent(clave)}`);
       if (!response.ok) throw new Error('No se pudo obtener la imagen');
@@ -227,6 +237,59 @@ export default function Home() {
     } finally {
       setLoadingImagen(false);
     }
+  };
+
+  const handleVerImagenesTabs = async (label: string, tabs: Array<{ clave: string; tabLabel: string; valor?: number | string }>) => {
+    setImagenLabel(label);
+    setImagenTabs(tabs);
+    setImagenValores(null);
+    setActiveTab(0);
+    setLoadingImagen(true);
+    setImagenUrl(null);
+    const firstTab = tabs[0];
+    if (resultados?.imagenes && resultados.imagenes[firstTab.clave]) {
+      try {
+        const response = await fetch(`/mediciones/${resultadosEstudioId}/imagen?clave=${encodeURIComponent(resultados.imagenes[firstTab.clave])}`);
+        if (!response.ok) throw new Error('No se pudo obtener la imagen');
+        const data = await response.json();
+        setImagenUrl(data.url);
+      } catch (err) {
+        console.error(err);
+      } finally {
+        setLoadingImagen(false);
+      }
+    } else {
+      setLoadingImagen(false);
+    }
+  };
+
+  const handleTabChange = async (tabIndex: number) => {
+    if (!imagenTabs) return;
+    setActiveTab(tabIndex);
+    setLoadingImagen(true);
+    const tab = imagenTabs[tabIndex];
+    if (resultados?.imagenes && resultados.imagenes[tab.clave]) {
+      try {
+        const response = await fetch(`/mediciones/${resultadosEstudioId}/imagen?clave=${encodeURIComponent(resultados.imagenes[tab.clave])}`);
+        if (!response.ok) throw new Error('No se pudo obtener la imagen');
+        const data = await response.json();
+        setImagenUrl(data.url);
+      } catch (err) {
+        console.error(err);
+      } finally {
+        setLoadingImagen(false);
+      }
+    } else {
+      setLoadingImagen(false);
+    }
+  };
+
+  const handleCerrarImagen = () => {
+    setImagenUrl(null);
+    setImagenLabel('');
+    setImagenValores(null);
+    setImagenTabs(null);
+    setActiveTab(0);
   };
 
   const handleCloseSeriesModal = () => {
@@ -772,42 +835,124 @@ export default function Home() {
                 ) : resultados ? (
                   <div className="space-y-6">
 
-                    {/* Lightbox de imagen */}
+                    {/* Modal de imagen */}
                     {(imagenUrl || loadingImagen) && (
-                      <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[70]" onClick={() => setImagenUrl(null)}>
-                        <div className="relative max-w-4xl max-h-[90vh] p-2" onClick={e => e.stopPropagation()}>
-                          <button
-                            onClick={() => setImagenUrl(null)}
-                            className="absolute -top-3 -right-3 bg-white rounded-full p-1 shadow-lg text-gray-600 hover:text-gray-900 z-10"
-                          >
-                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                            </svg>
-                          </button>
-                          {loadingImagen ? (
-                            <div className="bg-white rounded p-12 text-gray-500 text-sm">Cargando imagen...</div>
-                          ) : (
-                            <img src={imagenUrl!} alt="Imagen del ángulo" className="rounded-lg max-h-[85vh] object-contain shadow-2xl" />
-                          )}
+                      <div className="fixed inset-0 bg-black/75 flex items-center justify-center z-[70]" onClick={handleCerrarImagen}>
+                        <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl mx-4 flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
+                          {/* Header */}
+                          <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
+                            <div>
+                              <p className="text-xs font-semibold text-blue-600 uppercase tracking-wider mb-0.5">Visualización</p>
+                              <h3 className="text-base font-bold text-gray-900">{imagenLabel || 'Imagen del ángulo'}</h3>
+                            </div>
+                            <button
+                              onClick={handleCerrarImagen}
+                              className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+                            >
+                              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                              </svg>
+                            </button>
+                          </div>
+
+                          {/* Tabs o Valores */}
+                          {imagenTabs && imagenTabs.length > 1 ? (
+                            <div className="flex border-b border-gray-100">
+                              {imagenTabs.map((tab, i) => (
+                                <button
+                                  key={tab.clave}
+                                  onClick={() => handleTabChange(i)}
+                                  className={`flex-1 px-6 py-3 text-center transition-colors border-b-2 ${
+                                    activeTab === i
+                                      ? 'border-blue-500 bg-white'
+                                      : 'border-transparent bg-gray-50 hover:bg-gray-100'
+                                  }`}
+                                >
+                                  <p className={`text-xs uppercase tracking-wide mb-1 ${activeTab === i ? 'text-blue-600 font-semibold' : 'text-gray-400'}`}>{tab.tabLabel}</p>
+                                  {tab.valor !== undefined && (
+                                    <p className={`text-2xl font-bold ${activeTab === i ? 'text-gray-900' : 'text-gray-400'}`}>{tab.valor}°</p>
+                                  )}
+                                </button>
+                              ))}
+                            </div>
+                          ) : imagenValores && (imagenValores.izq !== undefined || imagenValores.der !== undefined) ? (
+                            <div className="flex divide-x divide-gray-100 bg-gray-50 border-b border-gray-100">
+                              {imagenValores.der !== undefined && (
+                                <div className="flex-1 px-6 py-3 text-center">
+                                  <p className="text-xs text-gray-400 uppercase tracking-wide mb-1">Derecho</p>
+                                  <p className="text-2xl font-bold text-gray-900">{imagenValores.der}°</p>
+                                </div>
+                              )}
+                              {imagenValores.izq !== undefined && (
+                                <div className="flex-1 px-6 py-3 text-center">
+                                  <p className="text-xs text-gray-400 uppercase tracking-wide mb-1">Izquierdo</p>
+                                  <p className="text-2xl font-bold text-gray-900">{imagenValores.izq}°</p>
+                                </div>
+                              )}
+                            </div>
+                          ) : null}
+
+                          {/* Imagen */}
+                          <div className="relative p-4 bg-black flex items-center justify-center min-h-48">
+                            {imagenUrl && (
+                              <img src={imagenUrl} alt={imagenLabel} className="max-h-[55vh] object-contain" />
+                            )}
+                            {loadingImagen && (
+                              <div className={`${imagenUrl ? 'absolute inset-0 bg-black/60' : ''} flex items-center justify-center`}>
+                                <svg className="animate-spin h-8 w-8 text-white" fill="none" viewBox="0 0 24 24">
+                                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                                </svg>
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Footer */}
+                          <div className="px-5 py-3 flex justify-end border-t border-gray-100">
+                            <button
+                              onClick={handleCerrarImagen}
+                              className="px-4 py-2 text-sm border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
+                            >
+                              Cerrar
+                            </button>
+                          </div>
                         </div>
                       </div>
                     )}
 
                     {/* Ojito helper */}
                     {(() => {
-                      const OjoBtn = ({ clave }: { clave: string }) => {
+                      const eyeIcon = (
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z" />
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+                        </svg>
+                      );
+
+                      const OjoBtn = ({ clave, label, valores }: { clave: string; label: string; valores?: { izq?: number | string; der?: number | string } }) => {
                         const tiene = resultados.imagenes && resultados.imagenes[clave];
                         if (!tiene) return null;
                         return (
                           <button
-                            onClick={() => handleVerImagen(resultados.imagenes[clave])}
-                            className="ml-1 p-0.5 text-gray-300 hover:text-blue-500 transition-colors"
+                            onClick={() => handleVerImagen(resultados.imagenes[clave], label, valores)}
+                            className="p-1 text-gray-300 hover:text-blue-500 transition-colors"
                             title="Ver imagen"
                           >
-                            <svg className="w-3.5 h-3.5 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z" />
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
-                            </svg>
+                            {eyeIcon}
+                          </button>
+                        );
+                      };
+
+                      const OjoBtnTabs = ({ label, tabs }: { label: string; tabs: Array<{ clave: string; tabLabel: string; valor?: number | string }> }) => {
+                        const tieneAlguna = tabs.some(t => resultados.imagenes && resultados.imagenes[t.clave]);
+                        if (!tieneAlguna) return null;
+                        return (
+                          <button
+                            onClick={() => handleVerImagenesTabs(label, tabs)}
+                            className="p-1 text-gray-300 hover:text-blue-500 transition-colors"
+                            title="Ver imágenes"
+                          >
+                            {eyeIcon}
                           </button>
                         );
                       };
@@ -837,7 +982,7 @@ export default function Home() {
                                         <td className="px-4 py-2 text-gray-700">Centro-Borde Lateral</td>
                                         <td className="px-4 py-2 text-center text-gray-900 font-medium">{resultados.angulos_coronales.centroBordeLateral.izq}°</td>
                                         <td className="px-4 py-2 text-center text-gray-900 font-medium">{resultados.angulos_coronales.centroBordeLateral.der}°</td>
-                                        <td className="px-4 py-2 text-center"><OjoBtn clave="angulo_centro_borde_lateral" /></td>
+                                        <td className="px-4 py-2 text-center"><OjoBtn clave="angulo_centro_borde_lateral" label="Centro-Borde Lateral" valores={{ izq: resultados.angulos_coronales.centroBordeLateral.izq, der: resultados.angulos_coronales.centroBordeLateral.der }} /></td>
                                       </tr>
                                     )}
                                     {resultados.angulos_coronales.inclinacionAcetabular && (
@@ -845,7 +990,7 @@ export default function Home() {
                                         <td className="px-4 py-2 text-gray-700">Inclinacion Acetabular</td>
                                         <td className="px-4 py-2 text-center text-gray-900 font-medium">{resultados.angulos_coronales.inclinacionAcetabular.izq}°</td>
                                         <td className="px-4 py-2 text-center text-gray-900 font-medium">{resultados.angulos_coronales.inclinacionAcetabular.der}°</td>
-                                        <td className="px-4 py-2 text-center"><OjoBtn clave="inclinacion_acetabular" /></td>
+                                        <td className="px-4 py-2 text-center"><OjoBtn clave="inclinacion_acetabular" label="Inclinación Acetabular" valores={{ izq: resultados.angulos_coronales.inclinacionAcetabular.izq, der: resultados.angulos_coronales.inclinacionAcetabular.der }} /></td>
                                       </tr>
                                     )}
                                   </tbody>
@@ -886,7 +1031,7 @@ export default function Home() {
                                           <td className="px-4 py-2 text-center text-gray-900 font-medium">{val.der}°</td>
                                           {i === 0 ? (
                                             <td className="px-4 py-2 text-center align-middle" rowSpan={Object.keys(angulos).length}>
-                                              <OjoBtn clave={`angulos_axiales_${nivel}_aasa_pasa`} />
+                                              <OjoBtn clave={`angulos_axiales_${nivel}_aasa_pasa`} label={`Plano Axial — ${nivel}`} />
                                             </td>
                                           ) : null}
                                         </tr>
@@ -924,8 +1069,13 @@ export default function Home() {
                                         <td className="px-4 py-2 text-center text-gray-900 font-medium">{val.izq}°</td>
                                         <td className="px-4 py-2 text-center text-gray-900 font-medium">{val.der}°</td>
                                         <td className="px-4 py-2 text-center">
-                                          <OjoBtn clave="angulo_centro_borde_anterior_izquierdo" />
-                                          <OjoBtn clave="angulo_centro_borde_anterior_derecho" />
+                                          <OjoBtnTabs
+                                            label="Centro-Borde Anterior"
+                                            tabs={[
+                                              { clave: 'angulo_centro_borde_anterior_derecho', tabLabel: 'Derecho', valor: val.der },
+                                              { clave: 'angulo_centro_borde_anterior_izquierdo', tabLabel: 'Izquierdo', valor: val.izq },
+                                            ]}
+                                          />
                                         </td>
                                       </tr>
                                     ))}
@@ -969,8 +1119,13 @@ export default function Home() {
                                         <td className="px-4 py-2 text-center text-gray-900 font-medium">{val.der?.anterior}°</td>
                                         <td className="px-4 py-2 text-center text-gray-900 font-medium">{val.der?.posterior}°</td>
                                         <td className="px-4 py-2 text-center">
-                                          <OjoBtn clave={`alfa_${hora}_izquierdo`} />
-                                          <OjoBtn clave={`alfa_${hora}_derecho`} />
+                                          <OjoBtnTabs
+                                            label={`Ángulo Alfa ${hora.replace('_', ' ')}`}
+                                            tabs={[
+                                              { clave: `alfa_${hora}_derecho`, tabLabel: 'Derecho', valor: val.der?.anterior },
+                                              { clave: `alfa_${hora}_izquierdo`, tabLabel: 'Izquierdo', valor: val.izq?.anterior },
+                                            ]}
+                                          />
                                         </td>
                                       </tr>
                                     ))}
