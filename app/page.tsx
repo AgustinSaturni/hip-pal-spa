@@ -436,6 +436,73 @@ export default function Home() {
     return result
   }
 
+  // Que dibuja y que se puede arrastrar en cada plano. `extend` replica la
+  // extension que el backend le da a la recta al dibujarla sobre la imagen:
+  // sin eso quedaria media recta horneada sin tapar por el overlay.
+  const editorGeometria = (): {
+    lineas: { from: string; to: string; color: string; extend?: number }[]
+    handles: { key: string; color: string }[]
+    fijos: string[]
+  } => {
+    if (editorPlano === 'sagital') return {
+      lineas: [{ from: 'centroide', to: 'punto_filo', color: '#ef4444', extend: 2 }],
+      handles: [{ key: 'punto_filo', color: '#ef4444' }],
+      fijos: ['centroide'],
+    }
+    return {
+      lineas: [
+        { from: 'centroide_der', to: 'aasa_der', color: '#ef4444' },
+        { from: 'centroide_der', to: 'pasa_der', color: '#3b82f6' },
+        { from: 'centroide_izq', to: 'aasa_izq', color: '#ef4444' },
+        { from: 'centroide_izq', to: 'pasa_izq', color: '#3b82f6' },
+      ],
+      handles: [
+        { key: 'aasa_der', color: '#ef4444' }, { key: 'pasa_der', color: '#3b82f6' },
+        { key: 'aasa_izq', color: '#ef4444' }, { key: 'pasa_izq', color: '#3b82f6' },
+      ],
+      fijos: ['centroide_der', 'centroide_izq'],
+    }
+  }
+
+  // Valores que muestra el panel superior del editor.
+  const editorMetricas = (): { key: string; label: string; color: string }[] => {
+    if (editorPlano === 'sagital') return [
+      { key: 'centro_borde_anterior', label: 'Centro-Borde Ant.', color: 'text-red-600' },
+    ]
+    return [
+      { key: 'aasa_der', label: 'AASA Der', color: 'text-red-600' },
+      { key: 'pasa_der', label: 'PASA Der', color: 'text-blue-600' },
+      { key: 'aasa_izq', label: 'AASA Izq', color: 'text-red-600' },
+      { key: 'pasa_izq', label: 'PASA Izq', color: 'text-blue-600' },
+    ]
+  }
+
+  const handleOpenEditorSagital = async (lado: 'der' | 'izq') => {
+    const sag = resultados?.angulos_sagitales
+    const puntos = sag?.puntos?.[lado] as Record<string, Pt | null> | undefined
+    if (!puntos) return
+    const angulos = { centro_borde_anterior: sag.centro_borde_anterior?.[lado] ?? 0 }
+    setEditorPlano('sagital')
+    setEditorLado(lado)
+    setEditorImgDims(null)
+    setEditorLabel(`Plano Sagital — ${lado === 'der' ? 'Derecho' : 'Izquierdo'}`)
+    setEditorPuntos(puntos)
+    setEditorOriginalPuntos(puntos)
+    setEditorAngulos(angulos)
+    setEditorOriginalAngulos(angulos)
+    setEditorOpen(true)
+    setEditorLoadingImage(true)
+    setEditorImageUrl(null)
+    setEditorSaveError(null)
+    try {
+      const clave = resultados.imagenes?.[`angulo_centro_borde_anterior_${lado === 'der' ? 'derecho' : 'izquierdo'}`]
+      if (!clave) throw new Error()
+      const res = await fetch(`/mediciones/${resultadosEstudioId}/imagen?clave=${encodeURIComponent(clave)}`)
+      setEditorImageUrl((await res.json()).url)
+    } catch { setEditorImageUrl(null) }
+    finally { setEditorLoadingImage(false) }
+  }
+
   const handleOpenEditor = async (nivel: string, imageKey: string) => {
     if (!resultados?.angulos_axiales?.[nivel]?.puntos) return
     const nivelData = resultados.angulos_axiales[nivel]
@@ -501,14 +568,19 @@ export default function Home() {
     setSavingEditor(true)
     setEditorSaveError(null)
     const updated = JSON.parse(JSON.stringify(resultados))
-    const nivel = updated.angulos_axiales[editorNivel]
-    nivel.aasa.der = editorAngulos.aasa_der
-    nivel.aasa.izq = editorAngulos.aasa_izq
-    nivel.pasa.der = editorAngulos.pasa_der
-    nivel.pasa.izq = editorAngulos.pasa_izq
-    nivel.hasa.der = Math.round((editorAngulos.aasa_der + editorAngulos.pasa_der) * 100) / 100
-    nivel.hasa.izq = Math.round((editorAngulos.aasa_izq + editorAngulos.pasa_izq) * 100) / 100
-    nivel.puntos = editorPuntos
+    if (editorPlano === 'sagital') {
+      updated.angulos_sagitales.centro_borde_anterior[editorLado] = editorAngulos.centro_borde_anterior
+      updated.angulos_sagitales.puntos[editorLado] = editorPuntos
+    } else {
+      const nivel = updated.angulos_axiales[editorNivel]
+      nivel.aasa.der = editorAngulos.aasa_der
+      nivel.aasa.izq = editorAngulos.aasa_izq
+      nivel.pasa.der = editorAngulos.pasa_der
+      nivel.pasa.izq = editorAngulos.pasa_izq
+      nivel.hasa.der = r2(editorAngulos.aasa_der + editorAngulos.pasa_der)
+      nivel.hasa.izq = r2(editorAngulos.aasa_izq + editorAngulos.pasa_izq)
+      nivel.puntos = editorPuntos
+    }
     try {
       const res = await fetch(`/mediciones/${resultadosEstudioId}`, {
         method: 'PATCH',
@@ -1416,13 +1488,25 @@ export default function Home() {
                                         <td className="px-4 py-2 text-center text-gray-900 font-medium">{val.izq}°</td>
                                         <td className="px-4 py-2 text-center text-gray-900 font-medium">{val.der}°</td>
                                         <td className="px-4 py-2 text-center">
-                                          <OjoBtnTabs
-                                            label="Centro-Borde Anterior"
-                                            tabs={[
-                                              { clave: 'angulo_centro_borde_anterior_derecho', tabLabel: 'Derecho', valor: val.der },
-                                              { clave: 'angulo_centro_borde_anterior_izquierdo', tabLabel: 'Izquierdo', valor: val.izq },
-                                            ]}
-                                          />
+                                          <div className="flex items-center justify-center gap-1">
+                                            <OjoBtnTabs
+                                              label="Centro-Borde Anterior"
+                                              tabs={[
+                                                { clave: 'angulo_centro_borde_anterior_derecho', tabLabel: 'Derecho', valor: val.der },
+                                                { clave: 'angulo_centro_borde_anterior_izquierdo', tabLabel: 'Izquierdo', valor: val.izq },
+                                              ]}
+                                            />
+                                            {resultados.angulos_sagitales?.puntos && (['der', 'izq'] as const).map(lado => (
+                                              <button
+                                                key={lado}
+                                                onClick={() => handleOpenEditorSagital(lado)}
+                                                className="px-1 text-[10px] font-semibold text-gray-300 hover:text-amber-500 transition-colors"
+                                                title={`Corregir ángulo ${lado === 'der' ? 'derecho' : 'izquierdo'}`}
+                                              >
+                                                {lado === 'der' ? 'D' : 'I'}
+                                              </button>
+                                            ))}
+                                          </div>
                                         </td>
                                       </tr>
                                     ))}
@@ -1520,25 +1604,24 @@ export default function Home() {
 
               {/* Angle values panel */}
               <div className="px-5 py-3 bg-gray-50 border-b border-gray-100 flex gap-6 flex-wrap">
-                {[
-                  { key: 'aasa_der', label: 'AASA Der', color: 'text-red-600' },
-                  { key: 'pasa_der', label: 'PASA Der', color: 'text-blue-600' },
-                  { key: 'aasa_izq', label: 'AASA Izq', color: 'text-red-600' },
-                  { key: 'pasa_izq', label: 'PASA Izq', color: 'text-blue-600' },
-                ].map(({ key, label, color }) => (
+                {editorMetricas().map(({ key, label, color }) => (
                   <div key={key} className="text-center">
                     <p className={`text-xs font-medium ${color} uppercase tracking-wide`}>{label}</p>
-                    <p className="text-xl font-bold text-gray-900">{editorAngulos[key as keyof typeof editorAngulos]}°</p>
+                    <p className="text-xl font-bold text-gray-900">{editorAngulos[key] ?? 0}°</p>
                   </div>
                 ))}
-                <div className="text-center ml-4 pl-4 border-l border-gray-200">
-                  <p className="text-xs font-medium text-gray-400 uppercase tracking-wide">HASA Der</p>
-                  <p className="text-xl font-bold text-gray-500">{Math.round((editorAngulos.aasa_der + editorAngulos.pasa_der) * 100) / 100}°</p>
-                </div>
-                <div className="text-center">
-                  <p className="text-xs font-medium text-gray-400 uppercase tracking-wide">HASA Izq</p>
-                  <p className="text-xl font-bold text-gray-500">{Math.round((editorAngulos.aasa_izq + editorAngulos.pasa_izq) * 100) / 100}°</p>
-                </div>
+                {editorPlano === 'axial' && (
+                  <>
+                    <div className="text-center ml-4 pl-4 border-l border-gray-200">
+                      <p className="text-xs font-medium text-gray-400 uppercase tracking-wide">HASA Der</p>
+                      <p className="text-xl font-bold text-gray-500">{r2((editorAngulos.aasa_der ?? 0) + (editorAngulos.pasa_der ?? 0))}°</p>
+                    </div>
+                    <div className="text-center">
+                      <p className="text-xs font-medium text-gray-400 uppercase tracking-wide">HASA Izq</p>
+                      <p className="text-xl font-bold text-gray-500">{r2((editorAngulos.aasa_izq ?? 0) + (editorAngulos.pasa_izq ?? 0))}°</p>
+                    </div>
+                  </>
+                )}
               </div>
 
               {/* Image + SVG overlay */}
@@ -1575,21 +1658,17 @@ export default function Home() {
                         onMouseLeave={handleEditorSvgMouseUp}
                       >
 
-                        {/* Lines: centroid → endpoint */}
-                        {[
-                          { ptKey: 'aasa_der', cKey: 'centroide_der', color: '#ef4444' },
-                          { ptKey: 'pasa_der', cKey: 'centroide_der', color: '#3b82f6' },
-                          { ptKey: 'aasa_izq', cKey: 'centroide_izq', color: '#ef4444' },
-                          { ptKey: 'pasa_izq', cKey: 'centroide_izq', color: '#3b82f6' },
-                        ].map(({ ptKey, cKey, color }) => {
-                          const c = editorPuntos[cKey]
-                          const p = editorPuntos[ptKey]
+                        {/* Rectas: origen → punto, extendidas si el backend las dibuja así */}
+                        {editorGeometria().lineas.map(({ from, to, color, extend }) => {
+                          const c = editorPuntos[from]
+                          const p = editorPuntos[to]
                           if (!c || !p) return null
+                          const k = extend ?? 1
                           return (
                             <line
-                              key={ptKey}
+                              key={`${from}-${to}`}
                               x1={c.x * 100} y1={c.y * 100}
-                              x2={p.x * 100} y2={p.y * 100}
+                              x2={(c.x + (p.x - c.x) * k) * 100} y2={(c.y + (p.y - c.y) * k) * 100}
                               stroke={color}
                               strokeWidth="0.6"
                               opacity="0.9"
@@ -1597,20 +1676,15 @@ export default function Home() {
                           )
                         })}
 
-                        {/* Centroid dots */}
-                        {(['centroide_der', 'centroide_izq'] as const).map(key => {
+                        {/* Puntos fijos (no arrastrables) */}
+                        {editorGeometria().fijos.map(key => {
                           const p = editorPuntos[key]
                           if (!p) return null
                           return <circle key={`dot-${key}`} cx={p.x * 100} cy={p.y * 100} r="0.8" fill="#22c55e" opacity="0.9" />
                         })}
 
-                        {/* Draggable endpoint circles */}
-                        {[
-                          { key: 'aasa_der', color: '#ef4444' },
-                          { key: 'pasa_der', color: '#3b82f6' },
-                          { key: 'aasa_izq', color: '#ef4444' },
-                          { key: 'pasa_izq', color: '#3b82f6' },
-                        ].map(({ key, color }) => {
+                        {/* Handles arrastrables */}
+                        {editorGeometria().handles.map(({ key, color }) => {
                           const p = editorPuntos[key]
                           if (!p) return null
                           const isDragging = editorDragging === key
