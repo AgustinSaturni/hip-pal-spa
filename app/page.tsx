@@ -1310,7 +1310,7 @@ export default function Home() {
                                     </tr>
                                   </thead>
                                   <tbody className="divide-y divide-gray-200">
-                                    {Object.entries(resultados.angulos_sagitales).map(([key, val]: [string, any]) => (
+                                    {Object.entries(resultados.angulos_sagitales).filter(([k]) => k !== 'puntos').map(([key, val]: [string, any]) => (
                                       <tr key={key}>
                                         <td className="px-4 py-2 text-gray-700">
                                           {key === 'centro_borde_anterior' ? 'Centro-Borde Anterior' : key}
