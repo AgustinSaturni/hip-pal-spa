@@ -119,6 +119,8 @@ export default function Home() {
   const [editorNivel, setEditorNivel] = useState('')
   const [editorPlano, setEditorPlano] = useState<'axial' | 'sagital' | 'coronal'>('axial')
   const [editorLado, setEditorLado] = useState<'der' | 'izq'>('der')
+  // Coronal tiene dos imagenes horneadas distintas que comparten los mismos puntos.
+  const [editorVariante, setEditorVariante] = useState<'lateral' | 'inclinacion'>('lateral')
   const [editorPuntos, setEditorPuntos] = useState<Record<string, { x: number; y: number } | null>>({})
   const [editorOriginalPuntos, setEditorOriginalPuntos] = useState<Record<string, { x: number; y: number } | null>>({})
   const [editorAngulos, setEditorAngulos] = useState<Record<string, number>>({})
@@ -449,6 +451,28 @@ export default function Home() {
       handles: [{ key: 'punto_filo', color: '#ef4444' }],
       fijos: ['centroide'],
     }
+    if (editorPlano === 'coronal') return editorVariante === 'inclinacion'
+      ? {
+        lineas: [
+          { from: 'filo_inferior_der', to: 'filo_superior_der', color: '#eab308' },
+          { from: 'filo_inferior_izq', to: 'filo_superior_izq', color: '#eab308' },
+        ],
+        handles: [
+          { key: 'filo_superior_der', color: '#ef4444' }, { key: 'filo_superior_izq', color: '#ef4444' },
+          { key: 'filo_inferior_der', color: '#eab308' }, { key: 'filo_inferior_izq', color: '#eab308' },
+        ],
+        fijos: ['centroide_der', 'centroide_izq'],
+      }
+      : {
+        lineas: [
+          { from: 'centroide_der', to: 'filo_superior_der', color: '#ef4444' },
+          { from: 'centroide_izq', to: 'filo_superior_izq', color: '#ef4444' },
+        ],
+        handles: [
+          { key: 'filo_superior_der', color: '#ef4444' }, { key: 'filo_superior_izq', color: '#ef4444' },
+        ],
+        fijos: ['centroide_der', 'centroide_izq'],
+      }
     return {
       lineas: [
         { from: 'centroide_der', to: 'aasa_der', color: '#ef4444' },
@@ -468,6 +492,14 @@ export default function Home() {
   const editorMetricas = (): { key: string; label: string; color: string }[] => {
     if (editorPlano === 'sagital') return [
       { key: 'centro_borde_anterior', label: 'Centro-Borde Ant.', color: 'text-red-600' },
+    ]
+    // Los dos angulos coronales comparten filo_superior, asi que se muestran juntos
+    // aunque solo uno tenga su recta horneada en la imagen que se esta viendo.
+    if (editorPlano === 'coronal') return [
+      { key: 'centroBordeLateral_der', label: 'C-Borde Lat. Der', color: 'text-red-600' },
+      { key: 'centroBordeLateral_izq', label: 'C-Borde Lat. Izq', color: 'text-red-600' },
+      { key: 'inclinacionAcetabular_der', label: 'Inclinación Der', color: 'text-yellow-600' },
+      { key: 'inclinacionAcetabular_izq', label: 'Inclinación Izq', color: 'text-yellow-600' },
     ]
     return [
       { key: 'aasa_der', label: 'AASA Der', color: 'text-red-600' },
@@ -496,6 +528,41 @@ export default function Home() {
     setEditorSaveError(null)
     try {
       const clave = resultados.imagenes?.[`angulo_centro_borde_anterior_${lado === 'der' ? 'derecho' : 'izquierdo'}`]
+      if (!clave) throw new Error()
+      const res = await fetch(`/mediciones/${resultadosEstudioId}/imagen?clave=${encodeURIComponent(clave)}`)
+      setEditorImageUrl((await res.json()).url)
+    } catch { setEditorImageUrl(null) }
+    finally { setEditorLoadingImage(false) }
+  }
+
+  const handleOpenEditorCoronal = async (variante: 'lateral' | 'inclinacion') => {
+    const cor = resultados?.angulos_coronales
+    const puntos = cor?.puntos as Record<string, Pt | null> | undefined
+    if (!puntos) return
+    const angulos = {
+      centroBordeLateral_der: cor.centroBordeLateral?.der ?? 0,
+      centroBordeLateral_izq: cor.centroBordeLateral?.izq ?? 0,
+      inclinacionAcetabular_der: cor.inclinacionAcetabular?.der ?? 0,
+      inclinacionAcetabular_izq: cor.inclinacionAcetabular?.izq ?? 0,
+    }
+    setEditorPlano('coronal')
+    setEditorVariante(variante)
+    setEditorImgDims(null)
+    setEditorLabel(variante === 'inclinacion'
+      ? 'Plano Coronal — Inclinación Acetabular'
+      : 'Plano Coronal — Centro-Borde Lateral')
+    setEditorPuntos(puntos)
+    setEditorOriginalPuntos(puntos)
+    setEditorAngulos(angulos)
+    setEditorOriginalAngulos(angulos)
+    setEditorOpen(true)
+    setEditorLoadingImage(true)
+    setEditorImageUrl(null)
+    setEditorSaveError(null)
+    try {
+      const clave = resultados.imagenes?.[
+        variante === 'inclinacion' ? 'inclinacion_acetabular' : 'angulo_centro_borde_lateral'
+      ]
       if (!clave) throw new Error()
       const res = await fetch(`/mediciones/${resultadosEstudioId}/imagen?clave=${encodeURIComponent(clave)}`)
       setEditorImageUrl((await res.json()).url)
@@ -571,6 +638,13 @@ export default function Home() {
     if (editorPlano === 'sagital') {
       updated.angulos_sagitales.centro_borde_anterior[editorLado] = editorAngulos.centro_borde_anterior
       updated.angulos_sagitales.puntos[editorLado] = editorPuntos
+    } else if (editorPlano === 'coronal') {
+      const c = updated.angulos_coronales
+      for (const lado of ['der', 'izq'] as const) {
+        c.centroBordeLateral[lado] = editorAngulos[`centroBordeLateral_${lado}`]
+        c.inclinacionAcetabular[lado] = editorAngulos[`inclinacionAcetabular_${lado}`]
+      }
+      c.puntos = editorPuntos
     } else {
       const nivel = updated.angulos_axiales[editorNivel]
       nivel.aasa.der = editorAngulos.aasa_der
@@ -1310,6 +1384,18 @@ export default function Home() {
                         </svg>
                       );
 
+                      const BtnCorregir = ({ onClick }: { onClick: () => void }) => (
+                        <button
+                          onClick={onClick}
+                          className="p-1 text-gray-300 hover:text-amber-500 transition-colors"
+                          title="Corregir ángulos"
+                        >
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125" />
+                          </svg>
+                        </button>
+                      );
+
                       const OjoBtn = ({ clave, label, valores }: { clave: string; label: string; valores?: { izq?: number | string; der?: number | string } }) => {
                         const tiene = resultados.imagenes && resultados.imagenes[clave];
                         if (!tiene) return null;
@@ -1377,7 +1463,12 @@ export default function Home() {
                                         <td className="px-4 py-2 text-gray-700">Centro-Borde Lateral</td>
                                         <td className="px-4 py-2 text-center text-gray-900 font-medium">{resultados.angulos_coronales.centroBordeLateral.izq}°</td>
                                         <td className="px-4 py-2 text-center text-gray-900 font-medium">{resultados.angulos_coronales.centroBordeLateral.der}°</td>
-                                        <td className="px-4 py-2 text-center"><OjoBtn clave="angulo_centro_borde_lateral" label="Centro-Borde Lateral" valores={{ izq: resultados.angulos_coronales.centroBordeLateral.izq, der: resultados.angulos_coronales.centroBordeLateral.der }} /></td>
+                                        <td className="px-4 py-2 text-center">
+                                          <div className="flex items-center justify-center gap-1">
+                                            <OjoBtn clave="angulo_centro_borde_lateral" label="Centro-Borde Lateral" valores={{ izq: resultados.angulos_coronales.centroBordeLateral.izq, der: resultados.angulos_coronales.centroBordeLateral.der }} />
+                                            {resultados.angulos_coronales?.puntos && <BtnCorregir onClick={() => handleOpenEditorCoronal('lateral')} />}
+                                          </div>
+                                        </td>
                                       </tr>
                                     )}
                                     {resultados.angulos_coronales.inclinacionAcetabular && (
@@ -1385,7 +1476,12 @@ export default function Home() {
                                         <td className="px-4 py-2 text-gray-700">Inclinacion Acetabular</td>
                                         <td className="px-4 py-2 text-center text-gray-900 font-medium">{resultados.angulos_coronales.inclinacionAcetabular.izq}°</td>
                                         <td className="px-4 py-2 text-center text-gray-900 font-medium">{resultados.angulos_coronales.inclinacionAcetabular.der}°</td>
-                                        <td className="px-4 py-2 text-center"><OjoBtn clave="inclinacion_acetabular" label="Inclinación Acetabular" valores={{ izq: resultados.angulos_coronales.inclinacionAcetabular.izq, der: resultados.angulos_coronales.inclinacionAcetabular.der }} /></td>
+                                        <td className="px-4 py-2 text-center">
+                                          <div className="flex items-center justify-center gap-1">
+                                            <OjoBtn clave="inclinacion_acetabular" label="Inclinación Acetabular" valores={{ izq: resultados.angulos_coronales.inclinacionAcetabular.izq, der: resultados.angulos_coronales.inclinacionAcetabular.der }} />
+                                            {resultados.angulos_coronales?.puntos && <BtnCorregir onClick={() => handleOpenEditorCoronal('inclinacion')} />}
+                                          </div>
+                                        </td>
                                       </tr>
                                     )}
                                   </tbody>
