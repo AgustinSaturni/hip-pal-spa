@@ -1454,51 +1454,24 @@ export default function Home() {
                   </div>
                 ) : editorImageUrl ? (
                   <div className="w-full h-full flex items-center justify-center overflow-hidden">
-                    {/* CSS grid stacks img + SVG in the same cell — guaranteed pixel-perfect overlay */}
-                    <div style={{ display: 'grid', maxHeight: '75vh', maxWidth: '100%' }}>
+                    {/* inline-block wrapper shrinks to img size; SVG absolute covers it exactly */}
+                    <div style={{ display: 'inline-block', position: 'relative', maxHeight: '75vh', maxWidth: '100%', lineHeight: 0 }}>
                       <img
                         src={editorImageUrl}
                         alt={editorLabel}
-                        style={{ gridArea: '1/1', display: 'block', maxHeight: '75vh', maxWidth: '100%' }}
+                        style={{ display: 'block', maxHeight: '75vh', maxWidth: '100%' }}
                         draggable={false}
-                        onLoad={(e) => {
-                          const img = e.currentTarget
-                          console.log('=== Editor Debug ===')
-                          console.log('naturalWidth:', img.naturalWidth, 'naturalHeight:', img.naturalHeight)
-                          console.log('clientWidth:', img.clientWidth, 'clientHeight:', img.clientHeight)
-                          console.log('puntos:', JSON.stringify(editorPuntos, null, 2))
-                        }}
                       />
-                      {/* SVG overlay — CSS grid guarantees it covers exactly the img */}
+                      {/* SVG overlay — position absolute garantiza que cubre exactamente la imagen */}
                       <svg
                         ref={svgRef}
-                        style={{ gridArea: '1/1', width: '100%', height: '100%', cursor: editorDragging ? 'grabbing' : 'default' }}
+                        style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', cursor: editorDragging ? 'grabbing' : 'default' }}
                         viewBox="0 0 100 100"
                         preserveAspectRatio="none"
                         onMouseMove={handleEditorSvgMouseMove}
                         onMouseUp={handleEditorSvgMouseUp}
                         onMouseLeave={handleEditorSvgMouseUp}
                       >
-                        {/* Centroid circles (fixed) */}
-                        {(['centroide_der', 'centroide_izq'] as const).map(key => {
-                          const p = editorPuntos[key]
-                          const r = (typeof editorPuntos[key === 'centroide_der' ? 'radio_der' : 'radio_izq'] === 'number'
-                            ? (editorPuntos[key === 'centroide_der' ? 'radio_der' : 'radio_izq'] as unknown as number) * 100
-                            : 5)
-                          if (!p) return null
-                          return (
-                            <circle
-                              key={key}
-                              cx={p.x * 100}
-                              cy={p.y * 100}
-                              r={r}
-                              fill="none"
-                              stroke="#22c55e"
-                              strokeWidth="0.5"
-                              opacity="0.7"
-                            />
-                          )
-                        })}
 
                         {/* Lines: centroid → endpoint */}
                         {[
