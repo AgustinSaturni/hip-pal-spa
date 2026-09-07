@@ -117,10 +117,15 @@ export default function Home() {
   const [editorLoadingImage, setEditorLoadingImage] = useState(false)
   const [editorLabel, setEditorLabel] = useState('')
   const [editorNivel, setEditorNivel] = useState('')
+  const [editorPlano, setEditorPlano] = useState<'axial' | 'sagital' | 'coronal'>('axial')
+  const [editorLado, setEditorLado] = useState<'der' | 'izq'>('der')
   const [editorPuntos, setEditorPuntos] = useState<Record<string, { x: number; y: number } | null>>({})
   const [editorOriginalPuntos, setEditorOriginalPuntos] = useState<Record<string, { x: number; y: number } | null>>({})
-  const [editorAngulos, setEditorAngulos] = useState<{ aasa_der: number; aasa_izq: number; pasa_der: number; pasa_izq: number }>({ aasa_der: 0, aasa_izq: 0, pasa_der: 0, pasa_izq: 0 })
-  const [editorOriginalAngulos, setEditorOriginalAngulos] = useState<{ aasa_der: number; aasa_izq: number; pasa_der: number; pasa_izq: number }>({ aasa_der: 0, aasa_izq: 0, pasa_der: 0, pasa_izq: 0 })
+  const [editorAngulos, setEditorAngulos] = useState<Record<string, number>>({})
+  const [editorOriginalAngulos, setEditorOriginalAngulos] = useState<Record<string, number>>({})
+  // Dimensiones naturales de la imagen: sagital (512x437) y coronal (512x438) no son
+  // cuadradas, y medir angulos sobre coordenadas normalizadas ahi desvia ~5 grados.
+  const [editorImgDims, setEditorImgDims] = useState<{ w: number; h: number } | null>(null)
   const [editorDragging, setEditorDragging] = useState<string | null>(null)
   const [savingEditor, setSavingEditor] = useState(false)
   const [editorSaveError, setEditorSaveError] = useState<string | null>(null)
@@ -329,23 +334,104 @@ export default function Home() {
   };
 
   // ---- Editor SVG ----
+  type Pt = { x: number; y: number }
+  type Dims = { w: number; h: number }
+
+  // Las coordenadas se guardan normalizadas [0,1]. Hay que desnormalizarlas con
+  // las dimensiones reales antes de medir cualquier angulo: sagital (512x437) y
+  // coronal (512x438) no son cuadradas y medir sobre normalizadas desvia ~5°.
+  const vecPx = (a: Pt, b: Pt, d: Dims): Pt => ({ x: (b.x - a.x) * d.w, y: (b.y - a.y) * d.h })
+
+  // Direccion de a->b en grados, con y hacia abajo (mismo convenio que
+  // linea_toca_blanco en el backend, que usa y + sin).
+  const angDir = (a: Pt, b: Pt, d: Dims) => {
+    const v = vecPx(a, b, d)
+    return Math.atan2(v.y, v.x) * 180 / Math.PI
+  }
+
+  // Angulo entre dos vectores (arccos), en grados.
+  const angEntre = (v1: Pt, v2: Pt) => {
+    const m = Math.hypot(v1.x, v1.y) * Math.hypot(v2.x, v2.y)
+    if (m === 0) return 0
+    return Math.acos(Math.max(-1, Math.min(1, (v1.x * v2.x + v1.y * v2.y) / m))) * 180 / Math.PI
+  }
+
+  const r2 = (n: number) => Math.round(n * 100) / 100
+
+  // Signo con que un giro del handle afecta al angulo publicado. No es uniforme:
+  // el backend aplica correcciones por lado y por nivel (ver calcular_angulos_axiales),
+  // asi que aasa_der se invierte y pasa_izq se invierte salvo en ecuatorial.
+  const signoAxial = (key: string, nivel: string) => {
+    if (key === 'aasa_der') return -1
+    if (key === 'pasa_izq') return nivel === 'ecuatorial' ? 1 : -1
+    return 1
+  }
+
+  // Recalcula por delta respecto de la posicion original. Se usa cuando la formula
+  // absoluta no reproduce el valor guardado: el punto es un pixel rasterizado sobre
+  // un rayo de grado entero, asi que reconstruirlo desvia ~1° y el angulo saltaria
+  // apenas se abre el editor, sin que el usuario toque nada.
+  const anguloPorDelta = (
+    c: Pt | null, orig: Pt | null, curr: Pt | null,
+    origAngulo: number, signo: number, d: Dims
+  ) => {
+    if (!c || !orig || !curr) return origAngulo
+    let delta = angDir(c, curr, d) - angDir(c, orig, d)
+    while (delta > 180) delta -= 360
+    while (delta < -180) delta += 360
+    return r2(origAngulo + signo * delta)
+  }
+
   const computeAxialAngulos = (
-    puntos: Record<string, { x: number; y: number } | null>,
-    origPuntos: Record<string, { x: number; y: number } | null>,
-    origAngulos: { aasa_der: number; aasa_izq: number; pasa_der: number; pasa_izq: number }
+    puntos: Record<string, Pt | null>,
+    origPuntos: Record<string, Pt | null>,
+    origAngulos: Record<string, number>,
+    nivel: string,
+    dims: Dims
   ) => {
     const result = { ...origAngulos }
-    const keys = ['aasa_der', 'aasa_izq', 'pasa_der', 'pasa_izq'] as const
-    for (const key of keys) {
+    for (const key of ['aasa_der', 'aasa_izq', 'pasa_der', 'pasa_izq']) {
       const cKey = key.endsWith('_der') ? 'centroide_der' : 'centroide_izq'
-      const c = puntos[cKey]; const orig = origPuntos[key]; const curr = puntos[key]
-      if (!c || !orig || !curr) continue
-      const angOrig = Math.atan2(orig.y - c.y, orig.x - c.x) * 180 / Math.PI
-      const angCurr = Math.atan2(curr.y - c.y, curr.x - c.x) * 180 / Math.PI
-      let delta = angCurr - angOrig
-      while (delta > 180) delta -= 360
-      while (delta < -180) delta += 360
-      result[key] = Math.round((origAngulos[key] + delta) * 100) / 100
+      result[key] = anguloPorDelta(
+        puntos[cKey], origPuntos[key], puntos[key],
+        origAngulos[key] ?? 0, signoAxial(key, nivel), dims
+      )
+    }
+    return result
+  }
+
+  // Sagital: |90 - direccion|, pero por delta (la formula absoluta desvia ~1°).
+  // El backend mide con y hacia arriba, de ahi el signo invertido respecto de angDir.
+  const computeSagitalAngulos = (
+    puntos: Record<string, Pt | null>,
+    origPuntos: Record<string, Pt | null>,
+    origAngulos: Record<string, number>,
+    dims: Dims
+  ) => ({
+    ...origAngulos,
+    centro_borde_anterior: anguloPorDelta(
+      puntos['centroide'], origPuntos['punto_filo'], puntos['punto_filo'],
+      origAngulos['centro_borde_anterior'] ?? 0, -1, dims
+    ),
+  })
+
+  // Coronal: ambas formulas absolutas reproducen exacto el valor del backend
+  // (verificado, error 0.00), asi que no hace falta delta.
+  const computeCoronalAngulos = (puntos: Record<string, Pt | null>, dims: Dims) => {
+    const result: Record<string, number> = {}
+    const cd = puntos['centroide_der'], ci = puntos['centroide_izq']
+    for (const lado of ['der', 'izq']) {
+      const c = puntos[`centroide_${lado}`]
+      const fs = puntos[`filo_superior_${lado}`]
+      const fi = puntos[`filo_inferior_${lado}`]
+      if (cd && ci && c && fs) {
+        // Perpendicular a la linea de centroides, rotada 90° antihorario.
+        const vc = vecPx(ci, cd, dims)
+        result[`centroBordeLateral_${lado}`] = r2(angEntre({ x: -vc.y, y: vc.x }, vecPx(c, fs, dims)))
+      }
+      if (fs && fi) {
+        result[`inclinacionAcetabular_${lado}`] = r2(angEntre({ x: 0, y: -1 }, vecPx(fi, fs, dims)))
+      }
     }
     return result
   }
@@ -361,6 +447,8 @@ export default function Home() {
       pasa_izq: nivelData.pasa?.izq ?? 0,
     }
     setEditorNivel(nivel)
+    setEditorPlano('axial')
+    setEditorImgDims(null)
     setEditorLabel(`Plano Axial — ${nivel.charAt(0).toUpperCase() + nivel.slice(1)}`)
     setEditorPuntos(puntos)
     setEditorOriginalPuntos(puntos)
@@ -393,7 +481,17 @@ export default function Home() {
     const y = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height))
     const newPuntos = { ...editorPuntos, [editorDragging]: { x, y } }
     setEditorPuntos(newPuntos)
-    setEditorAngulos(computeAxialAngulos(newPuntos, editorOriginalPuntos, editorOriginalAngulos))
+    setEditorAngulos(recalcularAngulos(newPuntos))
+  }
+
+  // Sin dimensiones todavia no se puede medir: las imagenes no cuadradas
+  // distorsionarian el angulo. Se rellenan en el onLoad de la imagen.
+  const recalcularAngulos = (puntos: Record<string, Pt | null>) => {
+    const d = editorImgDims
+    if (!d) return editorAngulos
+    if (editorPlano === 'sagital') return computeSagitalAngulos(puntos, editorOriginalPuntos, editorOriginalAngulos, d)
+    if (editorPlano === 'coronal') return computeCoronalAngulos(puntos, d)
+    return computeAxialAngulos(puntos, editorOriginalPuntos, editorOriginalAngulos, editorNivel, d)
   }
 
   const handleEditorSvgMouseUp = () => setEditorDragging(null)
@@ -1461,6 +1559,10 @@ export default function Home() {
                         alt={editorLabel}
                         style={{ display: 'block', maxHeight: '75vh', maxWidth: '100%' }}
                         draggable={false}
+                        onLoad={(e) => setEditorImgDims({
+                          w: e.currentTarget.naturalWidth,
+                          h: e.currentTarget.naturalHeight,
+                        })}
                       />
                       {/* SVG overlay — position absolute garantiza que cubre exactamente la imagen */}
                       <svg
