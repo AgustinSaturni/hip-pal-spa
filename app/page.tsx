@@ -443,12 +443,12 @@ export default function Home() {
   // sin eso quedaria media recta horneada sin tapar por el overlay.
   const editorGeometria = (): {
     lineas: { from: string; to: string; color: string; extend?: number }[]
-    handles: { key: string; color: string }[]
+    handles: { key: string; color: string; extend?: number; desde?: string }[]
     fijos: string[]
   } => {
     if (editorPlano === 'sagital') return {
       lineas: [{ from: 'centroide', to: 'punto_filo', color: '#ef4444', extend: 2 }],
-      handles: [{ key: 'punto_filo', color: '#ef4444' }],
+      handles: [{ key: 'punto_filo', color: '#ef4444', extend: 2, desde: 'centroide' }],
       fijos: ['centroide'],
     }
     if (editorPlano === 'coronal') return editorVariante === 'inclinacion'
@@ -647,8 +647,16 @@ export default function Home() {
   const handleEditorSvgMouseMove = (e: React.MouseEvent<SVGSVGElement>) => {
     if (!editorDragging || !svgRef.current) return
     const rect = svgRef.current.getBoundingClientRect()
-    const x = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width))
-    const y = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height))
+    let x = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width))
+    let y = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height))
+    // El handle se dibuja en la punta de la recta extendida, pero lo que se guarda
+    // es el punto real (el borde detectado), asi que hay que deshacer la extension.
+    const h = editorGeometria().handles.find(h => h.key === editorDragging)
+    const o = h?.desde ? editorPuntos[h.desde] : null
+    if (o && h?.extend) {
+      x = o.x + (x - o.x) / h.extend
+      y = o.y + (y - o.y) / h.extend
+    }
     const newPuntos = { ...editorPuntos, [editorDragging]: { x, y } }
     setEditorPuntos(newPuntos)
     setEditorAngulos(recalcularAngulos(newPuntos))
@@ -1810,15 +1818,21 @@ export default function Home() {
                         })}
 
                         {/* Handles arrastrables */}
-                        {editorGeometria().handles.map(({ key, color }) => {
+                        {editorGeometria().handles.map(({ key, color, extend, desde }) => {
                           const p = editorPuntos[key]
                           if (!p) return null
                           const isDragging = editorDragging === key
+                          // Si la recta se dibuja extendida, el handle va en la punta:
+                          // agarrar el medio de la recta es confuso y da poco brazo.
+                          const o = desde ? editorPuntos[desde] : null
+                          const v = (o && extend)
+                            ? { x: o.x + (p.x - o.x) * extend, y: o.y + (p.y - o.y) * extend }
+                            : p
                           return (
                             <circle
                               key={key}
-                              cx={p.x * 100}
-                              cy={p.y * 100}
+                              cx={v.x * 100}
+                              cy={v.y * 100}
                               r={isDragging ? '1.8' : '1.4'}
                               fill={color}
                               stroke="white"
