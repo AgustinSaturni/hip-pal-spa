@@ -488,24 +488,60 @@ export default function Home() {
     }
   }
 
-  // Valores que muestra el panel superior del editor.
+  // Valores que se estan editando, en primer plano.
   const editorMetricas = (): { key: string; label: string; color: string }[] => {
     if (editorPlano === 'sagital') return [
       { key: 'centro_borde_anterior', label: 'Centro-Borde Ant.', color: 'text-red-600' },
     ]
-    // Los dos angulos coronales comparten filo_superior, asi que se muestran juntos
-    // aunque solo uno tenga su recta horneada en la imagen que se esta viendo.
-    if (editorPlano === 'coronal') return [
-      { key: 'centroBordeLateral_der', label: 'C-Borde Lat. Der', color: 'text-red-600' },
-      { key: 'centroBordeLateral_izq', label: 'C-Borde Lat. Izq', color: 'text-red-600' },
-      { key: 'inclinacionAcetabular_der', label: 'Inclinación Der', color: 'text-yellow-600' },
-      { key: 'inclinacionAcetabular_izq', label: 'Inclinación Izq', color: 'text-yellow-600' },
-    ]
+    if (editorPlano === 'coronal') return editorVariante === 'inclinacion'
+      ? [
+        { key: 'inclinacionAcetabular_der', label: 'Inclinación Der', color: 'text-yellow-600' },
+        { key: 'inclinacionAcetabular_izq', label: 'Inclinación Izq', color: 'text-yellow-600' },
+      ]
+      : [
+        { key: 'centroBordeLateral_der', label: 'C-Borde Lat. Der', color: 'text-red-600' },
+        { key: 'centroBordeLateral_izq', label: 'C-Borde Lat. Izq', color: 'text-red-600' },
+      ]
     return [
       { key: 'aasa_der', label: 'AASA Der', color: 'text-red-600' },
       { key: 'pasa_der', label: 'PASA Der', color: 'text-blue-600' },
       { key: 'aasa_izq', label: 'AASA Izq', color: 'text-red-600' },
       { key: 'pasa_izq', label: 'PASA Izq', color: 'text-blue-600' },
+    ]
+  }
+
+  // Valores que cambian como consecuencia, mostrados apagados: no se editan
+  // directamente pero dependen de los mismos puntos, asi que conviene verlos.
+  const editorMetricasSecundarias = (): { label: string; valor: number }[] => {
+    if (editorPlano === 'axial') return [
+      { label: 'HASA Der', valor: r2((editorAngulos.aasa_der ?? 0) + (editorAngulos.pasa_der ?? 0)) },
+      { label: 'HASA Izq', valor: r2((editorAngulos.aasa_izq ?? 0) + (editorAngulos.pasa_izq ?? 0)) },
+    ]
+    // Ambos angulos coronales dependen de filo_superior: mover ese punto cambia
+    // los dos del mismo lado. Se muestran para que el acoplamiento no sorprenda.
+    if (editorPlano === 'coronal') return editorVariante === 'inclinacion'
+      ? [
+        { label: 'C-Borde Lat. Der', valor: editorAngulos.centroBordeLateral_der ?? 0 },
+        { label: 'C-Borde Lat. Izq', valor: editorAngulos.centroBordeLateral_izq ?? 0 },
+      ]
+      : [
+        { label: 'Inclinación Der', valor: editorAngulos.inclinacionAcetabular_der ?? 0 },
+        { label: 'Inclinación Izq', valor: editorAngulos.inclinacionAcetabular_izq ?? 0 },
+      ]
+    return []
+  }
+
+  // Leyenda del pie del editor, segun lo que se dibuja en cada plano.
+  const editorLeyenda = (): { color: string; texto: string }[] => {
+    if (editorPlano === 'sagital') return [
+      { color: 'bg-red-500', texto: 'Centro-Borde Anterior' },
+    ]
+    if (editorPlano === 'coronal') return editorVariante === 'inclinacion'
+      ? [{ color: 'bg-yellow-500', texto: 'Techo acetabular (borde inferior → superior)' }]
+      : [{ color: 'bg-red-500', texto: 'Centro-Borde Lateral (centroide → borde superior)' }]
+    return [
+      { color: 'bg-red-500', texto: 'AASA' },
+      { color: 'bg-blue-500', texto: 'PASA' },
     ]
   }
 
@@ -1706,18 +1742,12 @@ export default function Home() {
                     <p className="text-xl font-bold text-gray-900">{editorAngulos[key] ?? 0}°</p>
                   </div>
                 ))}
-                {editorPlano === 'axial' && (
-                  <>
-                    <div className="text-center ml-4 pl-4 border-l border-gray-200">
-                      <p className="text-xs font-medium text-gray-400 uppercase tracking-wide">HASA Der</p>
-                      <p className="text-xl font-bold text-gray-500">{r2((editorAngulos.aasa_der ?? 0) + (editorAngulos.pasa_der ?? 0))}°</p>
-                    </div>
-                    <div className="text-center">
-                      <p className="text-xs font-medium text-gray-400 uppercase tracking-wide">HASA Izq</p>
-                      <p className="text-xl font-bold text-gray-500">{r2((editorAngulos.aasa_izq ?? 0) + (editorAngulos.pasa_izq ?? 0))}°</p>
-                    </div>
-                  </>
-                )}
+                {editorMetricasSecundarias().map(({ label, valor }, i) => (
+                  <div key={label} className={`text-center ${i === 0 ? 'ml-4 pl-4 border-l border-gray-200' : ''}`}>
+                    <p className="text-xs font-medium text-gray-400 uppercase tracking-wide">{label}</p>
+                    <p className="text-xl font-bold text-gray-500">{valor}°</p>
+                  </div>
+                ))}
               </div>
 
               {/* Image + SVG overlay */}
@@ -1809,8 +1839,9 @@ export default function Home() {
 
               {/* Legend */}
               <div className="px-5 py-2 bg-gray-50 border-t border-gray-100 flex gap-4 text-xs text-gray-500">
-                <span className="flex items-center gap-1.5"><span className="w-3 h-0.5 bg-red-500 inline-block"></span>AASA</span>
-                <span className="flex items-center gap-1.5"><span className="w-3 h-0.5 bg-blue-500 inline-block"></span>PASA</span>
+                {editorLeyenda().map(({ color, texto }) => (
+                  <span key={texto} className="flex items-center gap-1.5"><span className={`w-3 h-0.5 ${color} inline-block`}></span>{texto}</span>
+                ))}
                 <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full border border-green-500 inline-block"></span>Centroide (cabeza femoral)</span>
                 <span className="ml-2 text-gray-400">Arrastrá los puntos de color para ajustar las líneas</span>
               </div>
