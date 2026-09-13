@@ -117,10 +117,11 @@ export default function Home() {
   const [editorLoadingImage, setEditorLoadingImage] = useState(false)
   const [editorLabel, setEditorLabel] = useState('')
   const [editorNivel, setEditorNivel] = useState('')
-  const [editorPlano, setEditorPlano] = useState<'axial' | 'sagital' | 'coronal'>('axial')
+  const [editorPlano, setEditorPlano] = useState<'axial' | 'sagital' | 'coronal' | 'alfa'>('axial')
   const [editorLado, setEditorLado] = useState<'der' | 'izq'>('der')
   // Coronal tiene dos imagenes horneadas distintas que comparten los mismos puntos.
   const [editorVariante, setEditorVariante] = useState<'lateral' | 'inclinacion'>('lateral')
+  const [editorHora, setEditorHora] = useState('')
   const [editorPuntos, setEditorPuntos] = useState<Record<string, { x: number; y: number } | null>>({})
   const [editorOriginalPuntos, setEditorOriginalPuntos] = useState<Record<string, { x: number; y: number } | null>>({})
   const [editorAngulos, setEditorAngulos] = useState<Record<string, number>>({})
@@ -402,20 +403,62 @@ export default function Home() {
     return result
   }
 
-  // Sagital: |90 - direccion|, pero por delta (la formula absoluta desvia ~1°).
-  // El backend mide con y hacia arriba, de ahi el signo invertido respecto de angDir.
+  // Normaliza a [-180, 180] y toma magnitud, igual que el backend.
+  const normAbs = (a: number) => {
+    while (a > 180) a -= 360
+    while (a < -180) a += 360
+    return Math.abs(a)
+  }
+
+  // Ancla el recalculo en el valor que guardo el backend: evalua la formula en
+  // los puntos actuales y en los originales, y aplica la diferencia. Asi no hay
+  // salto al abrir el editor (los puntos son pixeles rasterizados sobre un rayo
+  // de grado entero, y reconstruir la formula de cero desvia hasta ~1.7°) y el
+  // arrastre sigue la formula real, sin suponer en que rama cae el valor.
+  const anclado = (guardado: number, actual: number, original: number) => r2(guardado + (actual - original))
+
+  // Sagital: |90 - direccion|. El backend mide con y hacia arriba, de ahi el
+  // signo invertido respecto de angDir.
   const computeSagitalAngulos = (
     puntos: Record<string, Pt | null>,
     origPuntos: Record<string, Pt | null>,
     origAngulos: Record<string, number>,
     dims: Dims
-  ) => ({
-    ...origAngulos,
-    centro_borde_anterior: anguloPorDelta(
-      puntos['centroide'], origPuntos['punto_filo'], puntos['punto_filo'],
-      origAngulos['centro_borde_anterior'] ?? 0, -1, dims
-    ),
-  })
+  ) => {
+    const f = (p: Record<string, Pt | null>) => {
+      const c = p['centroide'], q = p['punto_filo']
+      return (c && q) ? Math.abs(90 - (-angDir(c, q, dims))) : null
+    }
+    const a = f(puntos), o = f(origPuntos)
+    const g = origAngulos['centro_borde_anterior'] ?? 0
+    return { ...origAngulos, centro_borde_anterior: (a === null || o === null) ? g : anclado(g, a, o) }
+  }
+
+  // Alfa: anterior y posterior se miden entre la bisectriz del cuello y cada
+  // recta limite. Mover la bisectriz afecta a los dos; cada recta limite, solo
+  // al suyo. El signo depende del lado (ver calcular_alfa en el backend).
+  const computeAlfaAngulos = (
+    puntos: Record<string, Pt | null>,
+    origPuntos: Record<string, Pt | null>,
+    origAngulos: Record<string, number>,
+    dims: Dims,
+    lado: 'der' | 'izq'
+  ) => {
+    const s = lado === 'der' ? 1 : -1
+    const f = (p: Record<string, Pt | null>) => {
+      const c = p['centroide'], h = p['punto_horario']
+      const ah = p['punto_antihorario'], b = p['punto_bisectriz']
+      if (!c || !h || !ah || !b) return null
+      const aH = angDir(c, h, dims), aAH = angDir(c, ah, dims), aB = angDir(c, b, dims)
+      return { anterior: normAbs(s * (aH - aB)), posterior: normAbs(s * (aB - aAH)) }
+    }
+    const a = f(puntos), o = f(origPuntos)
+    if (!a || !o) return origAngulos
+    return {
+      anterior: anclado(origAngulos.anterior ?? 0, a.anterior, o.anterior),
+      posterior: anclado(origAngulos.posterior ?? 0, a.posterior, o.posterior),
+    }
+  }
 
   // Coronal: ambas formulas absolutas reproducen exacto el valor del backend
   // (verificado, error 0.00), asi que no hace falta delta.
@@ -449,6 +492,22 @@ export default function Home() {
     if (editorPlano === 'sagital') return {
       lineas: [{ from: 'centroide', to: 'punto_filo', color: '#ef4444', extend: 2 }],
       handles: [{ key: 'punto_filo', color: '#ef4444', extend: 2, desde: 'centroide' }],
+      fijos: ['centroide'],
+    }
+    // El backend dibuja las tres rectas desde el centroide hasta el punto guardado,
+    // sin extension. Los colores horneados se invierten segun el lado; el overlay
+    // usa siempre rojo=anterior y verde=posterior, que es mas legible.
+    if (editorPlano === 'alfa') return {
+      lineas: [
+        { from: 'centroide', to: 'punto_horario', color: '#ef4444' },
+        { from: 'centroide', to: 'punto_antihorario', color: '#22c55e' },
+        { from: 'centroide', to: 'punto_bisectriz', color: '#3b82f6' },
+      ],
+      handles: [
+        { key: 'punto_horario', color: '#ef4444' },
+        { key: 'punto_antihorario', color: '#22c55e' },
+        { key: 'punto_bisectriz', color: '#3b82f6' },
+      ],
       fijos: ['centroide'],
     }
     if (editorPlano === 'coronal') return editorVariante === 'inclinacion'
@@ -493,6 +552,10 @@ export default function Home() {
     if (editorPlano === 'sagital') return [
       { key: 'centro_borde_anterior', label: 'Centro-Borde Ant.', color: 'text-red-600' },
     ]
+    if (editorPlano === 'alfa') return [
+      { key: 'anterior', label: 'Alfa Anterior', color: 'text-red-600' },
+      { key: 'posterior', label: 'Alfa Posterior', color: 'text-green-600' },
+    ]
     if (editorPlano === 'coronal') return editorVariante === 'inclinacion'
       ? [
         { key: 'inclinacionAcetabular_der', label: 'Inclinación Der', color: 'text-yellow-600' },
@@ -536,6 +599,11 @@ export default function Home() {
     if (editorPlano === 'sagital') return [
       { color: 'bg-red-500', texto: 'Centro-Borde Anterior' },
     ]
+    if (editorPlano === 'alfa') return [
+      { color: 'bg-red-500', texto: 'Límite anterior' },
+      { color: 'bg-green-500', texto: 'Límite posterior' },
+      { color: 'bg-blue-500', texto: 'Bisectriz del cuello (afecta a ambos)' },
+    ]
     if (editorPlano === 'coronal') return editorVariante === 'inclinacion'
       ? [{ color: 'bg-yellow-500', texto: 'Techo acetabular (borde inferior → superior)' }]
       : [{ color: 'bg-red-500', texto: 'Centro-Borde Lateral (centroide → borde superior)' }]
@@ -564,6 +632,33 @@ export default function Home() {
     setEditorSaveError(null)
     try {
       const clave = resultados.imagenes?.[`angulo_centro_borde_anterior_${lado === 'der' ? 'derecho' : 'izquierdo'}`]
+      if (!clave) throw new Error()
+      const res = await fetch(`/mediciones/${resultadosEstudioId}/imagen?clave=${encodeURIComponent(clave)}`)
+      setEditorImageUrl((await res.json()).url)
+    } catch { setEditorImageUrl(null) }
+    finally { setEditorLoadingImage(false) }
+  }
+
+  const handleOpenEditorAlfa = async (hora: string, lado: 'der' | 'izq') => {
+    const h = resultados?.angulos_alfa?.[hora]?.[lado]
+    const puntos = h?.puntos as Record<string, Pt | null> | undefined
+    if (!puntos) return
+    const angulos = { anterior: h.anterior ?? 0, posterior: h.posterior ?? 0 }
+    setEditorPlano('alfa')
+    setEditorHora(hora)
+    setEditorLado(lado)
+    setEditorImgDims(null)
+    setEditorLabel(`Ángulo Alfa — ${hora.replace('_', ' ')} ${lado === 'der' ? 'Derecho' : 'Izquierdo'}`)
+    setEditorPuntos(puntos)
+    setEditorOriginalPuntos(puntos)
+    setEditorAngulos(angulos)
+    setEditorOriginalAngulos(angulos)
+    setEditorOpen(true)
+    setEditorLoadingImage(true)
+    setEditorImageUrl(null)
+    setEditorSaveError(null)
+    try {
+      const clave = resultados.imagenes?.[`alfa_${hora}_${lado === 'der' ? 'derecho' : 'izquierdo'}`]
       if (!clave) throw new Error()
       const res = await fetch(`/mediciones/${resultadosEstudioId}/imagen?clave=${encodeURIComponent(clave)}`)
       setEditorImageUrl((await res.json()).url)
@@ -669,6 +764,7 @@ export default function Home() {
     if (!d) return editorAngulos
     if (editorPlano === 'sagital') return computeSagitalAngulos(puntos, editorOriginalPuntos, editorOriginalAngulos, d)
     if (editorPlano === 'coronal') return computeCoronalAngulos(puntos, d)
+    if (editorPlano === 'alfa') return computeAlfaAngulos(puntos, editorOriginalPuntos, editorOriginalAngulos, d, editorLado)
     return computeAxialAngulos(puntos, editorOriginalPuntos, editorOriginalAngulos, editorNivel, d)
   }
 
@@ -682,6 +778,11 @@ export default function Home() {
     if (editorPlano === 'sagital') {
       updated.angulos_sagitales.centro_borde_anterior[editorLado] = editorAngulos.centro_borde_anterior
       updated.angulos_sagitales.puntos[editorLado] = editorPuntos
+    } else if (editorPlano === 'alfa') {
+      const h = updated.angulos_alfa[editorHora][editorLado]
+      h.anterior = editorAngulos.anterior
+      h.posterior = editorAngulos.posterior
+      h.puntos = editorPuntos
     } else if (editorPlano === 'coronal') {
       const c = updated.angulos_coronales
       for (const lado of ['der', 'izq'] as const) {
@@ -1690,13 +1791,25 @@ export default function Home() {
                                         <td className="px-4 py-2 text-center text-gray-900 font-medium">{val.der?.anterior}°</td>
                                         <td className="px-4 py-2 text-center text-gray-900 font-medium">{val.der?.posterior}°</td>
                                         <td className="px-4 py-2 text-center">
-                                          <OjoBtnTabs
-                                            label={`Ángulo Alfa ${hora.replace('_', ' ')}`}
-                                            tabs={[
-                                              { clave: `alfa_${hora}_derecho`, tabLabel: 'Derecho', valor: val.der?.anterior },
-                                              { clave: `alfa_${hora}_izquierdo`, tabLabel: 'Izquierdo', valor: val.izq?.anterior },
-                                            ]}
-                                          />
+                                          <div className="flex items-center justify-center gap-1">
+                                            <OjoBtnTabs
+                                              label={`Ángulo Alfa ${hora.replace('_', ' ')}`}
+                                              tabs={[
+                                                { clave: `alfa_${hora}_derecho`, tabLabel: 'Derecho', valor: val.der?.anterior },
+                                                { clave: `alfa_${hora}_izquierdo`, tabLabel: 'Izquierdo', valor: val.izq?.anterior },
+                                              ]}
+                                            />
+                                            {(['der', 'izq'] as const).filter(l => val[l]?.puntos).map(l => (
+                                              <button
+                                                key={l}
+                                                onClick={() => handleOpenEditorAlfa(hora, l)}
+                                                className="px-1 text-[10px] font-semibold text-gray-300 hover:text-amber-500 transition-colors"
+                                                title={`Corregir ${l === 'der' ? 'derecho' : 'izquierdo'}`}
+                                              >
+                                                {l === 'der' ? 'D' : 'I'}
+                                              </button>
+                                            ))}
+                                          </div>
                                         </td>
                                       </tr>
                                     ))}
