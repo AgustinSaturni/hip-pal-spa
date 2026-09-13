@@ -100,7 +100,6 @@ export default function AppShell({ vista = 'buscar' }: { vista?: 'buscar' | 'med
   const [deletingEstudioId, setDeletingEstudioId] = useState<number | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
 
-  const [showResultadosModal, setShowResultadosModal] = useState(false);
   const [resultados, setResultados] = useState<any>(null);
   const [loadingResultados, setLoadingResultados] = useState(false);
   const [resultadosError, setResultadosError] = useState<string | null>(null);
@@ -233,10 +232,22 @@ export default function AppShell({ vista = 'buscar' }: { vista?: 'buscar' | 'med
       const response = await fetch(`/estudios/${estudioId}`, { method: 'DELETE' });
       if (!response.ok) throw new Error('Error al eliminar el estudio');
       setEstudios(prev => prev.filter(e => e.estudio_id !== estudioId));
+      return true;
     } catch (err) {
       setEstudiosError(err instanceof Error ? err.message : 'Error desconocido');
+      return false;
     } finally {
       setDeletingEstudioId(null);
+    }
+  };
+
+  // Borrado desde el rail: si el estudio borrado era el que se estaba viendo,
+  // hay que vaciar el detalle y sacar el ?estudio= de la URL.
+  const borrarDesdeRail = async (estudioId: number) => {
+    const ok = await handleDeleteEstudio(estudioId);
+    if (ok && resultadosEstudioId === estudioId) {
+      limpiarResultados();
+      router.push('/mediciones');
     }
   };
 
@@ -257,7 +268,6 @@ export default function AppShell({ vista = 'buscar' }: { vista?: 'buscar' | 'med
 
   const handleVerResultados = async (estudioId: number) => {
     setResultadosEstudioId(estudioId);
-    setShowResultadosModal(true);
     setLoadingResultados(true);
     setResultadosError(null);
     setResultados(null);
@@ -274,8 +284,8 @@ export default function AppShell({ vista = 'buscar' }: { vista?: 'buscar' | 'med
     }
   };
 
-  const handleCloseResultadosModal = () => {
-    setShowResultadosModal(false);
+  // Deja la vista de resultados en blanco (se usa al borrar el estudio abierto).
+  const limpiarResultados = () => {
     setResultados(null);
     setResultadosEstudioId(null);
     setImagenUrl(null);
@@ -1379,13 +1389,14 @@ export default function AppShell({ vista = 'buscar' }: { vista?: 'buscar' | 'med
                   const activo = resultadosEstudioId === est.estudio_id;
                   const finalizado = est.estado === 'Finalizado';
                   return (
-                    <li key={est.estudio_id}>
+                    <li
+                      key={est.estudio_id}
+                      className={`flex items-center group ${activo ? 'bg-blue-50' : finalizado ? 'hover:bg-gray-50' : ''}`}
+                    >
                       <button
                         onClick={() => finalizado && irAResultados(est.estudio_id)}
                         disabled={!finalizado}
-                        className={`w-full text-left px-4 py-2.5 transition-colors ${
-                          activo ? 'bg-blue-50' : finalizado ? 'hover:bg-gray-50' : 'cursor-not-allowed'
-                        }`}
+                        className={`flex-1 min-w-0 text-left pl-4 py-2.5 ${finalizado ? '' : 'cursor-not-allowed'}`}
                       >
                         <span className={`block text-sm ${activo ? 'text-blue-800 font-medium' : finalizado ? 'text-gray-700' : 'text-gray-400'}`}>
                           {est.created_at
@@ -1396,6 +1407,25 @@ export default function AppShell({ vista = 'buscar' }: { vista?: 'buscar' | 'med
                           {est.descripcion || `#${est.estudio_id}`} · {est.estado}
                         </span>
                       </button>
+                      {est.estado !== 'Procesando' && (
+                        <button
+                          onClick={() => setConfirmDeleteId(est.estudio_id)}
+                          disabled={deletingEstudioId === est.estudio_id}
+                          title="Eliminar estudio"
+                          className="px-3 py-2.5 text-gray-300 hover:text-red-600 focus:text-red-600 transition-colors disabled:text-gray-200"
+                        >
+                          {deletingEstudioId === est.estudio_id ? (
+                            <svg className="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24">
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                            </svg>
+                          ) : (
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" />
+                            </svg>
+                          )}
+                        </button>
+                      )}
                     </li>
                   );
                 })}
@@ -1426,6 +1456,43 @@ export default function AppShell({ vista = 'buscar' }: { vista?: 'buscar' | 'med
           </div>
         )}
       </section>
+
+      {confirmDeleteId !== null && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[80]">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm mx-6 overflow-hidden">
+            <div className="px-6 py-5">
+              <div className="flex items-center gap-3 mb-3">
+                <div className="flex items-center justify-center w-10 h-10 bg-red-100 rounded-full shrink-0">
+                  <svg className="w-5 h-5 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" />
+                  </svg>
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-gray-900">Eliminar estudio</h3>
+                  <p className="text-sm text-gray-500">Estudio #{confirmDeleteId}</p>
+                </div>
+              </div>
+              <p className="text-sm text-gray-600">
+                Esta acción eliminará el estudio, sus mediciones e imágenes permanentemente. No se puede deshacer.
+              </p>
+            </div>
+            <div className="px-6 pb-5 flex justify-end gap-2">
+              <button
+                onClick={() => setConfirmDeleteId(null)}
+                className="px-4 py-2 text-sm border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={() => borrarDesdeRail(confirmDeleteId)}
+                className="px-4 py-2 text-sm bg-red-600 text-white font-medium rounded-md hover:bg-red-700"
+              >
+                Eliminar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 
