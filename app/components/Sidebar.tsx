@@ -1,13 +1,14 @@
 'use client';
 
-import { useState } from 'react';
+import Link from 'next/link';
+import { usePathname } from 'next/navigation';
 
 const menuItems = [
   {
     section: 'Principal',
     items: [
-      { label: 'Buscar Paciente', icon: SearchIcon, active: true },
-      { label: 'Mediciones', icon: ChartIcon, disabled: false },
+      { label: 'Buscar Paciente', icon: SearchIcon, href: '/' },
+      { label: 'Mediciones', icon: ChartIcon, href: '/mediciones' },
       { label: 'Historial', icon: ClockIcon, disabled: true },
     ],
   },
@@ -30,6 +31,7 @@ const menuItems = [
 ];
 
 export default function Sidebar() {
+  const pathname = usePathname();
   return (
     <aside className="fixed left-0 top-0 h-screen w-64 bg-slate-900 text-white flex flex-col z-40">
       {/* Logo */}
@@ -53,28 +55,38 @@ export default function Sidebar() {
               {section.section}
             </p>
             <ul className="space-y-1">
-              {section.items.map((item) => (
-                <li key={item.label}>
-                  <button
-                    disabled={item.disabled}
-                    className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors ${
-                      item.active
-                        ? 'bg-blue-600 text-white'
-                        : item.disabled
-                        ? 'text-slate-600 cursor-not-allowed'
-                        : 'text-slate-300 hover:bg-slate-800 hover:text-white'
-                    }`}
-                  >
-                    <item.icon />
-                    <span>{item.label}</span>
-                    {item.disabled && (
-                      <span className="ml-auto text-[10px] bg-slate-700 text-slate-400 px-1.5 py-0.5 rounded">
-                        Próx.
-                      </span>
+              {section.items.map((item) => {
+                const activo = item.href === '/'
+                  ? pathname === '/'
+                  : !!item.href && pathname.startsWith(item.href);
+                const clases = `w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors ${
+                  activo
+                    ? 'bg-blue-600 text-white'
+                    : item.disabled
+                    ? 'text-slate-600 cursor-not-allowed'
+                    : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+                }`;
+                return (
+                  <li key={item.label}>
+                    {item.href ? (
+                      <Link href={item.href} className={clases}>
+                        <item.icon />
+                        <span>{item.label}</span>
+                      </Link>
+                    ) : (
+                      <button disabled={item.disabled} className={clases}>
+                        <item.icon />
+                        <span>{item.label}</span>
+                        {item.disabled && (
+                          <span className="ml-auto text-[10px] bg-slate-700 text-slate-400 px-1.5 py-0.5 rounded">
+                            Próx.
+                          </span>
+                        )}
+                      </button>
                     )}
-                  </button>
-                </li>
-              ))}
+                  </li>
+                );
+              })}
             </ul>
           </div>
         ))}
