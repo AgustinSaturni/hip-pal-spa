@@ -81,7 +81,7 @@ export default function VisorDicom({
   return (
     <div className="fixed inset-0 bg-black/85 flex items-center justify-center z-[85]" onClick={onClose}>
       <div
-        className="bg-white rounded-xl shadow-2xl w-full max-w-3xl mx-4 flex flex-col overflow-hidden max-h-[92vh]"
+        className="bg-white rounded-xl shadow-2xl w-full max-w-6xl mx-4 flex flex-col overflow-hidden max-h-[95vh]"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between">
@@ -99,7 +99,7 @@ export default function VisorDicom({
         <div
           ref={contenedorRef}
           className="bg-black flex items-center justify-center relative"
-          style={{ minHeight: 360 }}
+          style={{ minHeight: 520 }}
           onWheel={(e) => {
             if (!instancias.length) return;
             setIdx((i) => Math.min(instancias.length - 1, Math.max(0, i + (e.deltaY > 0 ? 1 : -1))));
@@ -120,7 +120,7 @@ export default function VisorDicom({
                 alt={`Corte ${idx + 1}`}
                 draggable={false}
                 onLoad={() => setPrimerCorteListo(true)}
-                style={{ maxHeight: '62vh', maxWidth: '100%', display: 'block' }}
+                style={{ height: '72vh', width: 'auto', maxWidth: '100%', display: 'block' }}
               />
               {!primerCorteListo && (
                 <p className="absolute text-gray-400 text-sm">Cargando corte...</p>
