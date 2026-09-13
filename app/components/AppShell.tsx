@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Patient, SearchResponse, Series, SeriesResponse } from '../types';
+import VisorDicom from './VisorDicom';
 
 const angleGroups = [
   {
@@ -92,6 +93,7 @@ export default function AppShell({ vista = 'buscar' }: { vista?: 'buscar' | 'med
   };
 
   const [showSeriesModal, setShowSeriesModal] = useState(false);
+  const [visorSerie, setVisorSerie] = useState<Series | null>(null);
   const [showMedicionesModal, setShowMedicionesModal] = useState(false);
   const [medicionesPatient, setMedicionesPatient] = useState<Patient | null>(null);
   const [estudios, setEstudios] = useState<any[]>([]);
@@ -1675,6 +1677,9 @@ export default function AppShell({ vista = 'buscar' }: { vista?: 'buscar' | 'med
                             <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
                               # Instancias
                             </th>
+                            <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                              Ver
+                            </th>
                           </tr>
                         </thead>
                         <tbody className="bg-white divide-y divide-gray-200">
@@ -1696,6 +1701,18 @@ export default function AppShell({ vista = 'buscar' }: { vista?: 'buscar' | 'med
                                 </td>
                                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 text-center">
                                   {seriesItem.num_instances}
+                                </td>
+                                <td className="px-6 py-4 whitespace-nowrap text-center">
+                                  <button
+                                    onClick={(e) => { e.stopPropagation(); setVisorSerie(seriesItem); }}
+                                    title="Ver cortes"
+                                    className="p-1 text-gray-300 hover:text-blue-600 transition-colors"
+                                  >
+                                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                                      <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z" />
+                                      <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+                                    </svg>
+                                  </button>
                                 </td>
                               </tr>
                             ))
@@ -2018,6 +2035,14 @@ export default function AppShell({ vista = 'buscar' }: { vista?: 'buscar' | 'med
           </div>
         )}
 
+
+        {visorSerie && (
+          <VisorDicom
+            seriesUuid={visorSerie.uuid}
+            descripcion={visorSerie.description}
+            onClose={() => setVisorSerie(null)}
+          />
+        )}
 
         {/* Editor SVG de ángulos */}
         {editorOpen && (
