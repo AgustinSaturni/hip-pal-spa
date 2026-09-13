@@ -1,13 +1,21 @@
 'use client';
 
+import { usePathname } from 'next/navigation';
+
+const titulos: Record<string, string> = {
+  '/': 'Buscar Paciente',
+  '/mediciones': 'Mediciones',
+};
+
 export default function Topbar() {
+  const pathname = usePathname();
   return (
     <header className="fixed top-0 right-0 left-64 h-16 bg-white border-b border-gray-200 flex items-center justify-between px-6 z-30">
       {/* Breadcrumb / Page title */}
       <div className="flex items-center gap-2 text-sm text-gray-500">
         <span>Hip-Pal</span>
         <span>/</span>
-        <span className="text-gray-900 font-medium">Buscar Paciente</span>
+        <span className="text-gray-900 font-medium">{titulos[pathname] ?? 'Hip-Pal'}</span>
       </div>
 
       {/* Right side */}

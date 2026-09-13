@@ -1,10 +1,10 @@
 import { Suspense } from 'react';
-import AppShell from './components/AppShell';
+import AppShell from '../components/AppShell';
 
 export default function Page() {
   return (
     <Suspense>
-      <AppShell vista="buscar" />
+      <AppShell vista="mediciones" />
     </Suspense>
   );
 }
