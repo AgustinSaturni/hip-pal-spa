@@ -1,11 +1,84 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
+import { useCierreDeFondo } from './useCierreDeFondo';
 
 // Muestra y permite corregir los resultados de una medicion: las tablas de
 // angulos, el modal de imagenes y el editor de puntos sobre la imagen. Se
 // maneja solo: recibe el id del estudio y se encarga de traer los datos y de
 // persistir las correcciones.
+
+/**
+ * Menu de opciones de una fila del reporte. El panel se dibuja en un portal con
+ * posicion fija: dentro de la tabla lo recortaria el overflow de la tarjeta.
+ */
+function MenuAcciones({ opciones }: { opciones: Array<{ label: string; onClick: () => void }> }) {
+  const [abierto, setAbierto] = useState(false);
+  const [pos, setPos] = useState<{ top: number; right: number } | null>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!abierto) return;
+    // Scrollear o redimensionar deja el panel lejos del boton que lo abrio.
+    const cerrar = () => setAbierto(false);
+    window.addEventListener('scroll', cerrar, true);
+    window.addEventListener('resize', cerrar);
+    return () => {
+      window.removeEventListener('scroll', cerrar, true);
+      window.removeEventListener('resize', cerrar);
+    };
+  }, [abierto]);
+
+  if (!opciones.length) return null;
+
+  const alternar = () => {
+    if (abierto) return setAbierto(false);
+    const r = btnRef.current?.getBoundingClientRect();
+    if (r) setPos({ top: r.bottom + 4, right: window.innerWidth - r.right });
+    setAbierto(true);
+  };
+
+  return (
+    <>
+      <button
+        ref={btnRef}
+        onClick={alternar}
+        title="Opciones"
+        className={`p-1 rounded transition-colors ${abierto ? 'text-gray-600 bg-gray-100' : 'text-gray-300 hover:text-gray-600'}`}
+      >
+        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.75a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5ZM12 12.75a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5ZM12 18.75a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5Z" />
+        </svg>
+      </button>
+
+      {abierto && pos && createPortal(
+        <>
+          <div className="fixed inset-0 z-[95]" onClick={() => setAbierto(false)} />
+          <div
+            style={{ position: 'fixed', top: pos.top, right: pos.right }}
+            className="z-[96] min-w-44 bg-white border border-gray-200 rounded-lg shadow-lg py-1"
+          >
+            {opciones.map((o) => (
+              <button
+                key={o.label}
+                onClick={() => { setAbierto(false); o.onClick(); }}
+                className="w-full flex items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+              >
+                <svg className="w-3.5 h-3.5 text-gray-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125" />
+                </svg>
+                {o.label}
+              </button>
+            ))}
+          </div>
+        </>,
+        document.body,
+      )}
+    </>
+  );
+}
+
 export default function ResultadosMedicion({ estudioId }: { estudioId: number | null }) {
   const [resultados, setResultados] = useState<any>(null);
   const [loadingResultados, setLoadingResultados] = useState(false);
@@ -106,6 +179,8 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
     }
   };
 
+  const cierreEditor = useCierreDeFondo(() => setEditorOpen(false));
+
   const handleCerrarImagen = () => {
     setImagenUrl(null);
     setImagenLabel('');
@@ -114,6 +189,8 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
     setImagenTabs(null);
     setActiveTab(0);
   };
+
+  const cierreImagen = useCierreDeFondo(handleCerrarImagen);
 
   // ---- Editor SVG ----
   type Pt = { x: number; y: number }
@@ -595,432 +672,333 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
     }
   }
 
-  // Contenido de los resultados de una medicion. Vive en la pestaña Mediciones,
-  // a ancho completo; antes estaba embutido en un modal de 3xl.
-  const renderResultados = () => (
-    <div className="p-6">
-                {loadingResultados ? (
-                  <div className="p-8 text-center">
-                    <p className="text-gray-500">Cargando resultados...</p>
-                  </div>
-                ) : resultadosError ? (
-                  <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded text-sm">
-                    {resultadosError}
-                  </div>
-                ) : resultados ? (
-                  <div className="space-y-6">
+  // --- Piezas visuales del reporte -------------------------------------------
 
-                    {/* Modal de imagen */}
-                    {(imagenUrl || loadingImagen) && (
-                      <div className="fixed inset-0 bg-black/75 flex items-center justify-center z-[70]" onClick={handleCerrarImagen}>
-                        <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl mx-4 flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
-                          {/* Header */}
-                          <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
-                            <div>
-                              <p className="text-xs font-semibold text-blue-600 uppercase tracking-wider mb-0.5">Visualización</p>
-                              <h3 className="text-base font-bold text-gray-900">{imagenLabel || 'Imagen del ángulo'}</h3>
-                            </div>
-                            <button
-                              onClick={handleCerrarImagen}
-                              className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
-                            >
-                              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                              </svg>
-                            </button>
-                          </div>
-
-                          {/* Tabs, Tabla, o Valores simples */}
-                          {imagenTablaValores ? (
-                            <div className="bg-gray-50 border-b border-gray-100 px-4 py-3">
-                              <table className="w-full text-sm">
-                                <thead>
-                                  <tr>
-                                    <th className="text-left text-xs text-gray-400 uppercase tracking-wide pb-2 font-medium">Ángulo</th>
-                                    <th className="text-center text-xs text-gray-400 uppercase tracking-wide pb-2 font-medium">Derecho</th>
-                                    <th className="text-center text-xs text-gray-400 uppercase tracking-wide pb-2 font-medium">Izquierdo</th>
-                                  </tr>
-                                </thead>
-                                <tbody className="divide-y divide-gray-200">
-                                  {imagenTablaValores.map((row) => (
-                                    <tr key={row.label}>
-                                      <td className="py-1.5 text-gray-600 font-medium">{row.label}</td>
-                                      <td className="py-1.5 text-center text-gray-900 font-bold">{row.der !== undefined ? `${row.der}°` : '—'}</td>
-                                      <td className="py-1.5 text-center text-gray-900 font-bold">{row.izq !== undefined ? `${row.izq}°` : '—'}</td>
-                                    </tr>
-                                  ))}
-                                </tbody>
-                              </table>
-                            </div>
-                          ) : imagenTabs && imagenTabs.length > 1 ? (
-                            <div className="flex border-b border-gray-100">
-                              {imagenTabs.map((tab, i) => (
-                                <button
-                                  key={tab.clave}
-                                  onClick={() => handleTabChange(i)}
-                                  className={`flex-1 px-6 py-3 text-center transition-colors border-b-2 ${
-                                    activeTab === i
-                                      ? 'border-blue-500 bg-white'
-                                      : 'border-transparent bg-gray-50 hover:bg-gray-100'
-                                  }`}
-                                >
-                                  <p className={`text-xs uppercase tracking-wide mb-1 ${activeTab === i ? 'text-blue-600 font-semibold' : 'text-gray-400'}`}>{tab.tabLabel}</p>
-                                  {tab.valor !== undefined && (
-                                    <p className={`text-2xl font-bold ${activeTab === i ? 'text-gray-900' : 'text-gray-400'}`}>{tab.valor}°</p>
-                                  )}
-                                </button>
-                              ))}
-                            </div>
-                          ) : imagenValores && (imagenValores.izq !== undefined || imagenValores.der !== undefined) ? (
-                            <div className="flex divide-x divide-gray-100 bg-gray-50 border-b border-gray-100">
-                              {imagenValores.der !== undefined && (
-                                <div className="flex-1 px-6 py-3 text-center">
-                                  <p className="text-xs text-gray-400 uppercase tracking-wide mb-1">Derecho</p>
-                                  <p className="text-2xl font-bold text-gray-900">{imagenValores.der}°</p>
-                                </div>
-                              )}
-                              {imagenValores.izq !== undefined && (
-                                <div className="flex-1 px-6 py-3 text-center">
-                                  <p className="text-xs text-gray-400 uppercase tracking-wide mb-1">Izquierdo</p>
-                                  <p className="text-2xl font-bold text-gray-900">{imagenValores.izq}°</p>
-                                </div>
-                              )}
-                            </div>
-                          ) : null}
-
-                          {/* Imagen */}
-                          <div className="relative p-4 bg-black flex items-center justify-center min-h-48">
-                            {imagenUrl && (
-                              <img src={imagenUrl} alt={imagenLabel} className="max-h-[55vh] object-contain" />
-                            )}
-                            {loadingImagen && (
-                              <div className={`${imagenUrl ? 'absolute inset-0 bg-black/60' : ''} flex items-center justify-center`}>
-                                <svg className="animate-spin h-8 w-8 text-white" fill="none" viewBox="0 0 24 24">
-                                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                                </svg>
-                              </div>
-                            )}
-                          </div>
-
-                          {/* Footer */}
-                          <div className="px-5 py-3 flex justify-end border-t border-gray-100">
-                            <button
-                              onClick={handleCerrarImagen}
-                              className="px-4 py-2 text-sm border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
-                            >
-                              Cerrar
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Ojito helper */}
-                    {(() => {
-                      const eyeIcon = (
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z" />
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
-                        </svg>
-                      );
-
-                      const BtnCorregir = ({ onClick }: { onClick: () => void }) => (
-                        <button
-                          onClick={onClick}
-                          className="p-1 text-gray-300 hover:text-amber-500 transition-colors"
-                          title="Corregir ángulos"
-                        >
-                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125" />
-                          </svg>
-                        </button>
-                      );
-
-                      const OjoBtn = ({ clave, label, valores }: { clave: string; label: string; valores?: { izq?: number | string; der?: number | string } }) => {
-                        const tiene = resultados.imagenes && resultados.imagenes[clave];
-                        if (!tiene) return null;
-                        return (
-                          <button
-                            onClick={() => handleVerImagen(resultados.imagenes[clave], label, valores)}
-                            className="p-1 text-gray-300 hover:text-blue-500 transition-colors"
-                            title="Ver imagen"
-                          >
-                            {eyeIcon}
-                          </button>
-                        );
-                      };
-
-                      const OjoBtnTabla = ({ clave, label, tabla }: { clave: string; label: string; tabla: Array<{ label: string; der?: number | string; izq?: number | string }> }) => {
-                        const tiene = resultados.imagenes && resultados.imagenes[clave];
-                        if (!tiene) return null;
-                        return (
-                          <button
-                            onClick={() => handleVerImagen(resultados.imagenes[clave], label, undefined, tabla)}
-                            className="p-1 text-gray-300 hover:text-blue-500 transition-colors"
-                            title="Ver imagen"
-                          >
-                            {eyeIcon}
-                          </button>
-                        );
-                      };
-
-                      const OjoBtnTabs = ({ label, tabs }: { label: string; tabs: Array<{ clave: string; tabLabel: string; valor?: number | string }> }) => {
-                        const tieneAlguna = tabs.some(t => resultados.imagenes && resultados.imagenes[t.clave]);
-                        if (!tieneAlguna) return null;
-                        return (
-                          <button
-                            onClick={() => handleVerImagenesTabs(label, tabs)}
-                            className="p-1 text-gray-300 hover:text-blue-500 transition-colors"
-                            title="Ver imágenes"
-                          >
-                            {eyeIcon}
-                          </button>
-                        );
-                      };
-
-                      return (
-                        <>
-                          {/* Angulos Coronales */}
-                          {resultados.angulos_coronales && (
-                            <div>
-                              <h3 className="text-sm font-bold text-gray-800 uppercase tracking-wide mb-3 flex items-center gap-2">
-                                <span className="w-2 h-2 bg-blue-500 rounded-full"></span>
-                                Plano Coronal
-                              </h3>
-                              <div className="bg-gray-50 rounded-lg overflow-hidden">
-                                <table className="min-w-full text-sm">
-                                  <thead>
-                                    <tr className="border-b border-gray-200">
-                                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">Angulo</th>
-                                      <th className="px-4 py-2 text-center text-xs font-medium text-gray-500">Izq</th>
-                                      <th className="px-4 py-2 text-center text-xs font-medium text-gray-500">Der</th>
-                                      <th className="px-4 py-2 text-center text-xs font-medium text-gray-500">Imagen</th>
-                                    </tr>
-                                  </thead>
-                                  <tbody className="divide-y divide-gray-200">
-                                    {resultados.angulos_coronales.centroBordeLateral && (
-                                      <tr>
-                                        <td className="px-4 py-2 text-gray-700">Centro-Borde Lateral</td>
-                                        <td className="px-4 py-2 text-center text-gray-900 font-medium">{resultados.angulos_coronales.centroBordeLateral.izq}°</td>
-                                        <td className="px-4 py-2 text-center text-gray-900 font-medium">{resultados.angulos_coronales.centroBordeLateral.der}°</td>
-                                        <td className="px-4 py-2 text-center">
-                                          <div className="flex items-center justify-center gap-1">
-                                            <OjoBtn clave="angulo_centro_borde_lateral" label="Centro-Borde Lateral" valores={{ izq: resultados.angulos_coronales.centroBordeLateral.izq, der: resultados.angulos_coronales.centroBordeLateral.der }} />
-                                            {resultados.angulos_coronales?.puntos && <BtnCorregir onClick={() => handleOpenEditorCoronal('lateral')} />}
-                                          </div>
-                                        </td>
-                                      </tr>
-                                    )}
-                                    {resultados.angulos_coronales.inclinacionAcetabular && (
-                                      <tr>
-                                        <td className="px-4 py-2 text-gray-700">Inclinacion Acetabular</td>
-                                        <td className="px-4 py-2 text-center text-gray-900 font-medium">{resultados.angulos_coronales.inclinacionAcetabular.izq}°</td>
-                                        <td className="px-4 py-2 text-center text-gray-900 font-medium">{resultados.angulos_coronales.inclinacionAcetabular.der}°</td>
-                                        <td className="px-4 py-2 text-center">
-                                          <div className="flex items-center justify-center gap-1">
-                                            <OjoBtn clave="inclinacion_acetabular" label="Inclinación Acetabular" valores={{ izq: resultados.angulos_coronales.inclinacionAcetabular.izq, der: resultados.angulos_coronales.inclinacionAcetabular.der }} />
-                                            {resultados.angulos_coronales?.puntos && <BtnCorregir onClick={() => handleOpenEditorCoronal('inclinacion')} />}
-                                          </div>
-                                        </td>
-                                      </tr>
-                                    )}
-                                  </tbody>
-                                </table>
-                              </div>
-                            </div>
-                          )}
-
-                          {/* Angulos Axiales */}
-                          {resultados.angulos_axiales && (
-                            <div>
-                              <h3 className="text-sm font-bold text-gray-800 uppercase tracking-wide mb-3 flex items-center gap-2">
-                                <span className="w-2 h-2 bg-green-500 rounded-full"></span>
-                                Plano Axial
-                              </h3>
-                              <div className="bg-gray-50 rounded-lg overflow-hidden">
-                                <table className="min-w-full text-sm">
-                                  <thead>
-                                    <tr className="border-b border-gray-200">
-                                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">Nivel</th>
-                                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">Angulo</th>
-                                      <th className="px-4 py-2 text-center text-xs font-medium text-gray-500">Izq</th>
-                                      <th className="px-4 py-2 text-center text-xs font-medium text-gray-500">Der</th>
-                                      <th className="px-4 py-2 text-center text-xs font-medium text-gray-500">Imagen</th>
-                                    </tr>
-                                  </thead>
-                                  <tbody className="divide-y divide-gray-200">
-                                    {(['proximal', 'intermedio', 'ecuatorial'] as const).filter(n => resultados.angulos_axiales[n]).flatMap((nivel) => {
-                                      const nivelData: any = resultados.angulos_axiales[nivel];
-                                      const angleEntries = Object.entries(nivelData).filter(([k]) => k !== 'puntos') as [string, any][];
-                                      const hasPuntos = !!nivelData.puntos;
-                                      return angleEntries.map(([angulo, val]: [string, any], i) => (
-                                        <tr key={`${nivel}-${angulo}`}>
-                                          {i === 0 && (
-                                            <td className="px-4 py-2 text-gray-700 font-medium capitalize align-middle" rowSpan={angleEntries.length}>
-                                              {nivel}
-                                            </td>
-                                          )}
-                                          <td className="px-4 py-2 text-gray-700 uppercase">{angulo}</td>
-                                          <td className="px-4 py-2 text-center text-gray-900 font-medium">{val.izq}°</td>
-                                          <td className="px-4 py-2 text-center text-gray-900 font-medium">{val.der}°</td>
-                                          {i === 0 ? (
-                                            <td className="px-4 py-2 text-center align-middle" rowSpan={angleEntries.length}>
-                                              <div className="flex items-center justify-center gap-1">
-                                                <OjoBtnTabla
-                                                  clave={`angulos_axiales_${nivel}_aasa_pasa`}
-                                                  label={`Plano Axial — ${nivel}`}
-                                                  tabla={angleEntries.map(([ang, v]: [string, any]) => ({
-                                                    label: ang.toUpperCase(),
-                                                    der: v.der,
-                                                    izq: v.izq,
-                                                  }))}
-                                                />
-                                                {hasPuntos && (
-                                                  <button
-                                                    onClick={() => handleOpenEditor(nivel, `angulos_axiales_${nivel}_aasa_pasa`)}
-                                                    className="p-1 text-gray-300 hover:text-amber-500 transition-colors"
-                                                    title="Corregir ángulos"
-                                                  >
-                                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                                                      <path strokeLinecap="round" strokeLinejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125" />
-                                                    </svg>
-                                                  </button>
-                                                )}
-                                              </div>
-                                            </td>
-                                          ) : null}
-                                        </tr>
-                                      ));
-                                    })}
-                                  </tbody>
-                                </table>
-                              </div>
-                            </div>
-                          )}
-
-                          {/* Angulos Sagitales */}
-                          {resultados.angulos_sagitales && (
-                            <div>
-                              <h3 className="text-sm font-bold text-gray-800 uppercase tracking-wide mb-3 flex items-center gap-2">
-                                <span className="w-2 h-2 bg-purple-500 rounded-full"></span>
-                                Plano Sagital
-                              </h3>
-                              <div className="bg-gray-50 rounded-lg overflow-hidden">
-                                <table className="min-w-full text-sm">
-                                  <thead>
-                                    <tr className="border-b border-gray-200">
-                                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">Angulo</th>
-                                      <th className="px-4 py-2 text-center text-xs font-medium text-gray-500">Izq</th>
-                                      <th className="px-4 py-2 text-center text-xs font-medium text-gray-500">Der</th>
-                                      <th className="px-4 py-2 text-center text-xs font-medium text-gray-500">Imagen</th>
-                                    </tr>
-                                  </thead>
-                                  <tbody className="divide-y divide-gray-200">
-                                    {Object.entries(resultados.angulos_sagitales).filter(([k]) => k !== 'puntos').map(([key, val]: [string, any]) => (
-                                      <tr key={key}>
-                                        <td className="px-4 py-2 text-gray-700">
-                                          {key === 'centro_borde_anterior' ? 'Centro-Borde Anterior' : key}
-                                        </td>
-                                        <td className="px-4 py-2 text-center text-gray-900 font-medium">{val.izq}°</td>
-                                        <td className="px-4 py-2 text-center text-gray-900 font-medium">{val.der}°</td>
-                                        <td className="px-4 py-2 text-center">
-                                          <div className="flex items-center justify-center gap-1">
-                                            <OjoBtnTabs
-                                              label="Centro-Borde Anterior"
-                                              tabs={[
-                                                { clave: 'angulo_centro_borde_anterior_derecho', tabLabel: 'Derecho', valor: val.der },
-                                                { clave: 'angulo_centro_borde_anterior_izquierdo', tabLabel: 'Izquierdo', valor: val.izq },
-                                              ]}
-                                            />
-                                            {resultados.angulos_sagitales?.puntos && (['der', 'izq'] as const).map(lado => (
-                                              <button
-                                                key={lado}
-                                                onClick={() => handleOpenEditorSagital(lado)}
-                                                className="px-1 text-[10px] font-semibold text-gray-300 hover:text-amber-500 transition-colors"
-                                                title={`Corregir ángulo ${lado === 'der' ? 'derecho' : 'izquierdo'}`}
-                                              >
-                                                {lado === 'der' ? 'D' : 'I'}
-                                              </button>
-                                            ))}
-                                          </div>
-                                        </td>
-                                      </tr>
-                                    ))}
-                                  </tbody>
-                                </table>
-                              </div>
-                            </div>
-                          )}
-
-                          {/* Angulo Alfa */}
-                          {resultados.angulos_alfa && (
-                            <div>
-                              <h3 className="text-sm font-bold text-gray-800 uppercase tracking-wide mb-3 flex items-center gap-2">
-                                <span className="w-2 h-2 bg-orange-500 rounded-full"></span>
-                                Angulo Alfa
-                              </h3>
-                              <div className="bg-gray-50 rounded-lg overflow-hidden">
-                                <table className="min-w-full text-sm">
-                                  <thead>
-                                    <tr className="border-b border-gray-200">
-                                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">Hora</th>
-                                      <th className="px-4 py-2 text-center text-xs font-medium text-gray-500" colSpan={2}>Izq</th>
-                                      <th className="px-4 py-2 text-center text-xs font-medium text-gray-500" colSpan={2}>Der</th>
-                                      <th className="px-4 py-2 text-center text-xs font-medium text-gray-500">Imagen</th>
-                                    </tr>
-                                    <tr className="border-b border-gray-200">
-                                      <th></th>
-                                      <th className="px-4 py-1 text-center text-xs text-gray-400">Ant</th>
-                                      <th className="px-4 py-1 text-center text-xs text-gray-400">Post</th>
-                                      <th className="px-4 py-1 text-center text-xs text-gray-400">Ant</th>
-                                      <th className="px-4 py-1 text-center text-xs text-gray-400">Post</th>
-                                      <th></th>
-                                    </tr>
-                                  </thead>
-                                  <tbody className="divide-y divide-gray-200">
-                                    {Object.entries(resultados.angulos_alfa).map(([hora, val]: [string, any]) => (
-                                      <tr key={hora}>
-                                        <td className="px-4 py-2 text-gray-700 capitalize">{hora.replace('_', ' ')}</td>
-                                        <td className="px-4 py-2 text-center text-gray-900 font-medium">{val.izq?.anterior}°</td>
-                                        <td className="px-4 py-2 text-center text-gray-900 font-medium">{val.izq?.posterior}°</td>
-                                        <td className="px-4 py-2 text-center text-gray-900 font-medium">{val.der?.anterior}°</td>
-                                        <td className="px-4 py-2 text-center text-gray-900 font-medium">{val.der?.posterior}°</td>
-                                        <td className="px-4 py-2 text-center">
-                                          <div className="flex items-center justify-center gap-1">
-                                            <OjoBtnTabs
-                                              label={`Ángulo Alfa ${hora.replace('_', ' ')}`}
-                                              tabs={[
-                                                { clave: `alfa_${hora}_derecho`, tabLabel: 'Derecho', valor: val.der?.anterior },
-                                                { clave: `alfa_${hora}_izquierdo`, tabLabel: 'Izquierdo', valor: val.izq?.anterior },
-                                              ]}
-                                            />
-                                            {(['der', 'izq'] as const).filter(l => val[l]?.puntos).map(l => (
-                                              <button
-                                                key={l}
-                                                onClick={() => handleOpenEditorAlfa(hora, l)}
-                                                className="px-1 text-[10px] font-semibold text-gray-300 hover:text-amber-500 transition-colors"
-                                                title={`Corregir ${l === 'der' ? 'derecho' : 'izquierdo'}`}
-                                              >
-                                                {l === 'der' ? 'D' : 'I'}
-                                              </button>
-                                            ))}
-                                          </div>
-                                        </td>
-                                      </tr>
-                                    ))}
-                                  </tbody>
-                                </table>
-                              </div>
-                            </div>
-                          )}
-                        </>
-                      );
-                    })()}
-                  </div>
-                ) : null}
-    </div>
+  const eyeIcon = (
+    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z" />
+      <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+    </svg>
   );
+
+  // Una tarjeta por plano. Sobre el gris del fondo se recortan solas, y en el
+  // grid de dos columnas cada tabla usa la mitad del ancho en vez de estirarse.
+  const Plano = ({ color, titulo, children }: { color: string; titulo: string; children: React.ReactNode }) => (
+    <section className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden flex flex-col">
+      <header className="px-4 py-2 bg-gray-50 border-b border-gray-200 flex items-center gap-2">
+        <span className={`w-2 h-2 rounded-full ${color}`} />
+        <h3 className="text-[11px] font-bold text-gray-600 uppercase tracking-wider">{titulo}</h3>
+      </header>
+      <div className="overflow-x-auto flex-1">{children}</div>
+    </section>
+  );
+
+  const thNum = 'px-4 py-2 text-center text-xs font-medium text-gray-500';
+  const thTxt = 'px-4 py-2 text-left text-xs font-medium text-gray-500';
+  const thAcc = 'px-4 py-2 text-center text-xs font-medium text-gray-500';
+  const tdAcc = 'px-4 py-2 text-center';
+  const tdNum = 'px-4 py-2 text-center text-gray-900 font-medium';
+
+  // Contenido de los resultados de una medicion, a ancho completo.
+  const renderResultados = () => {
+    if (loadingResultados) {
+      return (
+        <div className="bg-white border border-gray-200 rounded-xl shadow-sm px-6 py-16 text-center">
+          <p className="text-gray-500">Cargando resultados...</p>
+        </div>
+      );
+    }
+    if (resultadosError) {
+      return (
+        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm">
+          {resultadosError}
+        </div>
+      );
+    }
+    if (!resultados) return null;
+
+    const OjoBtn = ({ clave, label, valores }: { clave: string; label: string; valores?: { izq?: number | string; der?: number | string } }) => {
+      if (!resultados.imagenes || !resultados.imagenes[clave]) return null;
+      return (
+        <button
+          onClick={() => handleVerImagen(resultados.imagenes[clave], label, valores)}
+          className="p-1 text-gray-300 hover:text-blue-500 transition-colors"
+          title="Ver imagen"
+        >
+          {eyeIcon}
+        </button>
+      );
+    };
+
+    const OjoBtnTabla = ({ clave, label, tabla }: { clave: string; label: string; tabla: Array<{ label: string; der?: number | string; izq?: number | string }> }) => {
+      if (!resultados.imagenes || !resultados.imagenes[clave]) return null;
+      return (
+        <button
+          onClick={() => handleVerImagen(resultados.imagenes[clave], label, undefined, tabla)}
+          className="p-1 text-gray-300 hover:text-blue-500 transition-colors"
+          title="Ver imagen"
+        >
+          {eyeIcon}
+        </button>
+      );
+    };
+
+    const OjoBtnTabs = ({ label, tabs }: { label: string; tabs: Array<{ clave: string; tabLabel: string; valor?: number | string }> }) => {
+      if (!tabs.some(t => resultados.imagenes && resultados.imagenes[t.clave])) return null;
+      return (
+        <button
+          onClick={() => handleVerImagenesTabs(label, tabs)}
+          className="p-1 text-gray-300 hover:text-blue-500 transition-colors"
+          title="Ver imágenes"
+        >
+          {eyeIcon}
+        </button>
+      );
+    };
+
+    return (
+      <div className="@container">
+      <div className="grid grid-cols-1 @5xl:grid-cols-2 gap-5">
+
+        {/* Angulos Coronales */}
+        {resultados.angulos_coronales && (
+          <Plano color="bg-blue-500" titulo="Plano Coronal">
+            <table className="w-full text-sm table-fixed">
+              <colgroup>
+                <col />
+                <col style={{ width: '19%' }} />
+                <col style={{ width: '19%' }} />
+                <col style={{ width: '13%' }} />
+                <col style={{ width: '9%' }} />
+              </colgroup>
+              <thead>
+                <tr className="border-b border-gray-200">
+                  <th className={thTxt}>Ángulo</th>
+                  <th className={thNum}>Izq</th>
+                  <th className={thNum}>Der</th>
+                  <th className={thAcc}>Imagen</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-200">
+                {resultados.angulos_coronales.centroBordeLateral && (
+                  <tr>
+                    <td className="px-4 py-2 text-gray-700">Centro-Borde Lateral</td>
+                    <td className={tdNum}>{resultados.angulos_coronales.centroBordeLateral.izq}°</td>
+                    <td className={tdNum}>{resultados.angulos_coronales.centroBordeLateral.der}°</td>
+                    <td className={tdAcc}>
+                      <OjoBtn clave="angulo_centro_borde_lateral" label="Centro-Borde Lateral" valores={{ izq: resultados.angulos_coronales.centroBordeLateral.izq, der: resultados.angulos_coronales.centroBordeLateral.der }} />
+                    </td>
+                    <td className={tdAcc}>
+                      <MenuAcciones opciones={resultados.angulos_coronales?.puntos ? [{ label: 'Corregir ángulos', onClick: () => handleOpenEditorCoronal('lateral') }] : []} />
+                    </td>
+                  </tr>
+                )}
+                {resultados.angulos_coronales.inclinacionAcetabular && (
+                  <tr>
+                    <td className="px-4 py-2 text-gray-700">Inclinación Acetabular</td>
+                    <td className={tdNum}>{resultados.angulos_coronales.inclinacionAcetabular.izq}°</td>
+                    <td className={tdNum}>{resultados.angulos_coronales.inclinacionAcetabular.der}°</td>
+                    <td className={tdAcc}>
+                      <OjoBtn clave="inclinacion_acetabular" label="Inclinación Acetabular" valores={{ izq: resultados.angulos_coronales.inclinacionAcetabular.izq, der: resultados.angulos_coronales.inclinacionAcetabular.der }} />
+                    </td>
+                    <td className={tdAcc}>
+                      <MenuAcciones opciones={resultados.angulos_coronales?.puntos ? [{ label: 'Corregir ángulos', onClick: () => handleOpenEditorCoronal('inclinacion') }] : []} />
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </Plano>
+        )}
+
+        {/* Angulos Sagitales */}
+        {resultados.angulos_sagitales && (
+          <Plano color="bg-purple-500" titulo="Plano Sagital">
+            <table className="w-full text-sm table-fixed">
+              <colgroup>
+                <col />
+                <col style={{ width: '19%' }} />
+                <col style={{ width: '19%' }} />
+                <col style={{ width: '13%' }} />
+                <col style={{ width: '9%' }} />
+              </colgroup>
+              <thead>
+                <tr className="border-b border-gray-200">
+                  <th className={thTxt}>Ángulo</th>
+                  <th className={thNum}>Izq</th>
+                  <th className={thNum}>Der</th>
+                  <th className={thAcc}>Imagen</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-200">
+                {Object.entries(resultados.angulos_sagitales).filter(([k]) => k !== 'puntos').map(([key, val]: [string, any]) => (
+                  <tr key={key}>
+                    <td className="px-4 py-2 text-gray-700">
+                      {key === 'centro_borde_anterior' ? 'Centro-Borde Anterior' : key}
+                    </td>
+                    <td className={tdNum}>{val.izq}°</td>
+                    <td className={tdNum}>{val.der}°</td>
+                    <td className={tdAcc}>
+                      <div className="flex items-center justify-center gap-1">
+                        <OjoBtnTabs
+                          label="Centro-Borde Anterior"
+                          tabs={[
+                            { clave: 'angulo_centro_borde_anterior_derecho', tabLabel: 'Derecho', valor: val.der },
+                            { clave: 'angulo_centro_borde_anterior_izquierdo', tabLabel: 'Izquierdo', valor: val.izq },
+                          ]}
+                        />
+                      </div>
+                    </td>
+                    <td className={tdAcc}>
+                      <MenuAcciones
+                        opciones={resultados.angulos_sagitales?.puntos ? [
+                          { label: 'Corregir derecho', onClick: () => handleOpenEditorSagital('der') },
+                          { label: 'Corregir izquierdo', onClick: () => handleOpenEditorSagital('izq') },
+                        ] : []}
+                      />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </Plano>
+        )}
+
+        {/* Angulos Axiales */}
+        {resultados.angulos_axiales && (
+          <Plano color="bg-green-500" titulo="Plano Axial">
+            <table className="w-full h-full text-sm table-fixed">
+              <colgroup>
+                <col style={{ width: '20%' }} />
+                <col />
+                <col style={{ width: '18%' }} />
+                <col style={{ width: '18%' }} />
+                <col style={{ width: '13%' }} />
+                <col style={{ width: '9%' }} />
+              </colgroup>
+              <thead>
+                <tr className="border-b border-gray-200">
+                  <th className={thTxt}>Nivel</th>
+                  <th className={thTxt}>Ángulo</th>
+                  <th className={thNum}>Izq</th>
+                  <th className={thNum}>Der</th>
+                  <th className={thAcc}>Imagen</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-200">
+                {(['proximal', 'intermedio', 'ecuatorial'] as const).filter(n => resultados.angulos_axiales[n]).flatMap((nivel) => {
+                  const nivelData: any = resultados.angulos_axiales[nivel];
+                  const angleEntries = Object.entries(nivelData).filter(([k]) => k !== 'puntos') as [string, any][];
+                  const hasPuntos = !!nivelData.puntos;
+                  return angleEntries.map(([angulo, val]: [string, any], i) => (
+                    <tr key={`${nivel}-${angulo}`}>
+                      {i === 0 && (
+                        <td className="px-4 py-2 text-gray-700 font-medium capitalize align-middle" rowSpan={angleEntries.length}>
+                          {nivel}
+                        </td>
+                      )}
+                      <td className="px-4 py-2 text-gray-700 uppercase">{angulo}</td>
+                      <td className={tdNum}>{val.izq}°</td>
+                      <td className={tdNum}>{val.der}°</td>
+                      {i === 0 && (
+                        <>
+                          <td className={`${tdAcc} align-middle`} rowSpan={angleEntries.length}>
+                            <OjoBtnTabla
+                              clave={`angulos_axiales_${nivel}_aasa_pasa`}
+                              label={`Plano Axial — ${nivel}`}
+                              tabla={angleEntries.map(([ang, v]: [string, any]) => ({
+                                label: ang.toUpperCase(),
+                                der: v.der,
+                                izq: v.izq,
+                              }))}
+                            />
+                          </td>
+                          <td className={`${tdAcc} align-middle`} rowSpan={angleEntries.length}>
+                            <MenuAcciones opciones={hasPuntos ? [{ label: 'Corregir ángulos', onClick: () => handleOpenEditor(nivel, `angulos_axiales_${nivel}_aasa_pasa`) }] : []} />
+                          </td>
+                        </>
+                      )}
+                    </tr>
+                  ));
+                })}
+              </tbody>
+            </table>
+          </Plano>
+        )}
+
+        {/* Angulo Alfa */}
+        {resultados.angulos_alfa && (
+          <Plano color="bg-orange-500" titulo="Ángulo Alfa">
+            <table className="w-full h-full text-sm table-fixed">
+              <colgroup>
+                <col />
+                <col style={{ width: '15%' }} />
+                <col style={{ width: '15%' }} />
+                <col style={{ width: '15%' }} />
+                <col style={{ width: '15%' }} />
+                <col style={{ width: '12%' }} />
+                <col style={{ width: '9%' }} />
+              </colgroup>
+              <thead>
+                <tr className="border-b border-gray-200">
+                  <th className={thTxt}>Hora</th>
+                  <th className={thNum} colSpan={2}>Izq</th>
+                  <th className={thNum} colSpan={2}>Der</th>
+                  <th className={thAcc}>Imagen</th>
+                  <th></th>
+                </tr>
+                <tr className="border-b border-gray-200">
+                  <th></th>
+                  <th className="px-4 py-1 text-center text-xs text-gray-400">Ant</th>
+                  <th className="px-4 py-1 text-center text-xs text-gray-400">Post</th>
+                  <th className="px-4 py-1 text-center text-xs text-gray-400">Ant</th>
+                  <th className="px-4 py-1 text-center text-xs text-gray-400">Post</th>
+                  <th></th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-200">
+                {Object.entries(resultados.angulos_alfa).map(([hora, val]: [string, any]) => (
+                  <tr key={hora}>
+                    <td className="px-4 py-2 text-gray-700 capitalize whitespace-nowrap">{hora.replace('_', ' ')}</td>
+                    <td className={tdNum}>{val.izq?.anterior}°</td>
+                    <td className={tdNum}>{val.izq?.posterior}°</td>
+                    <td className={tdNum}>{val.der?.anterior}°</td>
+                    <td className={tdNum}>{val.der?.posterior}°</td>
+                    <td className={tdAcc}>
+                      <div className="flex items-center justify-center gap-1">
+                        <OjoBtnTabs
+                          label={`Ángulo Alfa ${hora.replace('_', ' ')}`}
+                          tabs={[
+                            { clave: `alfa_${hora}_derecho`, tabLabel: 'Derecho', valor: val.der?.anterior },
+                            { clave: `alfa_${hora}_izquierdo`, tabLabel: 'Izquierdo', valor: val.izq?.anterior },
+                          ]}
+                        />
+                      </div>
+                    </td>
+                    <td className={tdAcc}>
+                      <MenuAcciones
+                        opciones={(['der', 'izq'] as const)
+                          .filter(l => val[l]?.puntos)
+                          .map(l => ({
+                            label: `Corregir ${l === 'der' ? 'derecho' : 'izquierdo'}`,
+                            onClick: () => handleOpenEditorAlfa(hora, l),
+                          }))}
+                      />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </Plano>
+        )}
+      </div>
+      </div>
+    );
+  };
 
 
   useEffect(() => {
@@ -1052,9 +1030,105 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
     <>
       {renderResultados()}
 
+      {/* Modal de imagen del angulo */}
+      {(imagenUrl || loadingImagen) && (
+        <div className="fixed inset-0 bg-black/75 flex items-center justify-center z-[70]" {...cierreImagen}>
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl mx-4 flex flex-col overflow-hidden">
+            {/* Header */}
+            <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
+              <div>
+                <p className="text-xs font-semibold text-blue-600 uppercase tracking-wider mb-0.5">Visualización</p>
+                <h3 className="text-base font-bold text-gray-900">{imagenLabel || 'Imagen del ángulo'}</h3>
+              </div>
+              <button
+                onClick={handleCerrarImagen}
+                className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            {/* Tabs, Tabla, o Valores simples */}
+            {imagenTablaValores ? (
+              <div className="bg-gray-50 border-b border-gray-100 px-4 py-3">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr>
+                      <th className="text-left text-xs text-gray-400 uppercase tracking-wide pb-2 font-medium">Ángulo</th>
+                      <th className="text-center text-xs text-gray-400 uppercase tracking-wide pb-2 font-medium">Derecho</th>
+                      <th className="text-center text-xs text-gray-400 uppercase tracking-wide pb-2 font-medium">Izquierdo</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-200">
+                    {imagenTablaValores.map((row) => (
+                      <tr key={row.label}>
+                        <td className="py-1.5 text-gray-600 font-medium">{row.label}</td>
+                        <td className="py-1.5 text-center text-gray-900 font-bold">{row.der !== undefined ? `${row.der}°` : '—'}</td>
+                        <td className="py-1.5 text-center text-gray-900 font-bold">{row.izq !== undefined ? `${row.izq}°` : '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : imagenTabs && imagenTabs.length > 1 ? (
+              <div className="flex border-b border-gray-100">
+                {imagenTabs.map((tab, i) => (
+                  <button
+                    key={tab.clave}
+                    onClick={() => handleTabChange(i)}
+                    className={`flex-1 px-6 py-3 text-center transition-colors border-b-2 ${
+                      activeTab === i
+                        ? 'border-blue-500 bg-white'
+                        : 'border-transparent bg-gray-50 hover:bg-gray-100'
+                    }`}
+                  >
+                    <p className={`text-xs uppercase tracking-wide mb-1 ${activeTab === i ? 'text-blue-600 font-semibold' : 'text-gray-400'}`}>{tab.tabLabel}</p>
+                    {tab.valor !== undefined && (
+                      <p className={`text-2xl font-bold ${activeTab === i ? 'text-gray-900' : 'text-gray-400'}`}>{tab.valor}°</p>
+                    )}
+                  </button>
+                ))}
+              </div>
+            ) : imagenValores && (imagenValores.izq !== undefined || imagenValores.der !== undefined) ? (
+              <div className="flex divide-x divide-gray-100 bg-gray-50 border-b border-gray-100">
+                {imagenValores.der !== undefined && (
+                  <div className="flex-1 px-6 py-3 text-center">
+                    <p className="text-xs text-gray-400 uppercase tracking-wide mb-1">Derecho</p>
+                    <p className="text-2xl font-bold text-gray-900">{imagenValores.der}°</p>
+                  </div>
+                )}
+                {imagenValores.izq !== undefined && (
+                  <div className="flex-1 px-6 py-3 text-center">
+                    <p className="text-xs text-gray-400 uppercase tracking-wide mb-1">Izquierdo</p>
+                    <p className="text-2xl font-bold text-gray-900">{imagenValores.izq}°</p>
+                  </div>
+                )}
+              </div>
+            ) : null}
+
+            {/* Imagen */}
+            <div className="relative p-4 bg-black flex items-center justify-center min-h-48">
+              {imagenUrl && (
+                <img src={imagenUrl} alt={imagenLabel} className="max-h-[55vh] object-contain" />
+              )}
+              {loadingImagen && (
+                <div className={`${imagenUrl ? 'absolute inset-0 bg-black/60' : ''} flex items-center justify-center`}>
+                  <svg className="animate-spin h-8 w-8 text-white" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                  </svg>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
         {/* Editor SVG de ángulos */}
         {editorOpen && (
-          <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-[90]">
+          <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-[90]" {...cierreEditor}>
             <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl mx-4 flex flex-col overflow-hidden max-h-[95vh]">
               {/* Header */}
               <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">

@@ -1,10 +1,11 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useState, useEffect } from 'react';
 import { Patient, SearchResponse, Series, SeriesResponse } from '../types';
 import VisorDicom from './VisorDicom';
 import ResultadosMedicion from './ResultadosMedicion';
+import { useCierreDeFondo } from './useCierreDeFondo';
+import { useBreadcrumb } from './Breadcrumb';
 
 const angleGroups = [
   {
@@ -43,9 +44,7 @@ const angleGroups = [
 
 const allAngleIds = angleGroups.flatMap((g) => g.angles.map((a) => a.id));
 
-export default function AppShell({ vista = 'buscar' }: { vista?: 'buscar' | 'mediciones' }) {
-  const router = useRouter();
-  const searchParams = useSearchParams();
+export default function AppShell() {
   const [searchName, setSearchName] = useState('');
   const [patients, setPatients] = useState<Patient[]>([]);
   const [total, setTotal] = useState(0);
@@ -165,13 +164,9 @@ export default function AppShell({ vista = 'buscar' }: { vista?: 'buscar' | 'med
     setAnalysisError(null);
   };
 
-  const cargarEstudios = async (patient: Patient) => {
-    await handleMedicionesClick(patient, false);
-  };
-
-  const handleMedicionesClick = async (patient: Patient, abrirModal = true) => {
+  const handleMedicionesClick = async (patient: Patient) => {
     setMedicionesPatient(patient);
-    if (abrirModal) setShowMedicionesModal(true);
+    setShowMedicionesModal(true);
     setLoadingEstudios(true);
     setEstudiosError(null);
     setEstudios([]);
@@ -210,28 +205,22 @@ export default function AppShell({ vista = 'buscar' }: { vista?: 'buscar' | 'med
     }
   };
 
-  // Borrado desde el rail: si el estudio borrado era el que se estaba viendo,
-  // hay que vaciar el detalle y sacar el ?estudio= de la URL.
-  const borrarDesdeRail = async (estudioId: number) => {
+  // Borrado desde la vista de resultados: si el estudio borrado era el que se
+  // estaba viendo, hay que vaciar el detalle.
+  const borrarDesdeResultados = async (estudioId: number) => {
     const ok = await handleDeleteEstudio(estudioId);
-    if (ok && resultadosEstudioId === estudioId) {
-      router.push('/mediciones');
-    }
+    if (ok && resultadosEstudioId === estudioId) setResultadosEstudioId(null);
   };
 
-  // El ojito lleva a la pestaña Mediciones en vez de abrir un modal, para que
-  // los resultados usen toda la pantalla y queden con URL propia.
-  const irAResultados = (estudioId: number) => {
-    router.push(`/mediciones?estudio=${estudioId}`);
+  // El ojito reemplaza la vista de busqueda por los resultados a pantalla
+  // completa. No es una ruta aparte a proposito: al volver, el modal de
+  // estudios y la busqueda de pacientes siguen como estaban.
+  const irAResultados = (estudioId: number) => setResultadosEstudioId(estudioId);
+
+  const volverDeResultados = () => {
+    setResultadosEstudioId(null);
+    setConfirmDeleteId(null);
   };
-
-  // El estudio que se esta viendo sale de la URL. Traer los resultados es
-  // responsabilidad de ResultadosMedicion, que recibe este id.
-  useEffect(() => {
-    if (vista !== 'mediciones') return;
-    setResultadosEstudioId(Number(searchParams.get('estudio')) || null);
-  }, [vista, searchParams]);
-
 
 
   const handleCloseSeriesModal = () => {
@@ -276,148 +265,96 @@ export default function AppShell({ vista = 'buscar' }: { vista?: 'buscar' | 'med
     }
   };
 
+  // El breadcrumb del Topbar no puede deducir esta vista del pathname: la
+  // navegacion a los resultados es estado local, no una ruta.
+  const { setDetalle } = useBreadcrumb();
+  useEffect(() => {
+    setDetalle(resultadosEstudioId ? 'Resultados de Medición' : null);
+    return () => setDetalle(null);
+  }, [resultadosEstudioId, setDetalle]);
+
+  const cierreSeries = useCierreDeFondo(handleCloseSeriesModal);
+  const cierreMediciones = useCierreDeFondo(handleCloseMedicionesModal);
+  const cierreConfirmar = useCierreDeFondo(() => setConfirmDeleteId(null));
+  const cierreConfirmarModal = useCierreDeFondo(() => setConfirmDeleteId(null));
+
   const formatPatientName = (patientName: string) => {
     return patientName.replace(/\^/g, ' ').trim();
   };
 
-  const vistaMediciones = (
-    <div className="flex gap-5 items-start">
-      {/* Rail: paciente -> estudio */}
-      <aside className="w-72 shrink-0 space-y-4 sticky top-[5.5rem]">
-        <div className="bg-white rounded-lg shadow p-4">
-          <label className="block text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-2">
-            Buscar paciente
-          </label>
-          <div className="flex gap-2">
-            <input
-              type="text"
-              value={searchName}
-              onChange={(e) => setSearchName(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') handleSearch(); }}
-              placeholder="Nombre..."
-              className="flex-1 min-w-0 px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-gray-900"
-              disabled={loading}
-            />
-            <button
-              onClick={handleSearch}
-              disabled={loading}
-              className="px-3 py-2 bg-blue-600 text-white text-sm font-medium rounded-md hover:bg-blue-700 disabled:bg-gray-400"
-            >
-              {loading ? '...' : 'Ir'}
-            </button>
-          </div>
+  const estudioActual = estudios.find((e) => e.estudio_id === resultadosEstudioId);
+
+  const fmtFecha = (iso?: string | null) =>
+    iso ? new Date(iso).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' }) : null;
+
+  // Los resultados reemplazan la vista de busqueda en lugar de vivir en una
+  // pestaña propia: se llega desde el modal de estudios del paciente y se
+  // vuelve ahi mismo, con la busqueda y el modal intactos.
+  const vistaResultados = medicionesPatient && (
+    <div className="space-y-5">
+      {/* Cabecera en una sola barra: volver, de quien es el estudio que se esta
+          viendo, y borrarlo. Para cambiar de estudio se vuelve al modal. */}
+      <div className="bg-white border border-gray-200 rounded-xl shadow-sm px-4 py-3 flex items-center gap-4">
+        <button
+          onClick={volverDeResultados}
+          className="flex items-center gap-1.5 shrink-0 px-2.5 py-1.5 text-sm font-medium text-gray-500 rounded-md hover:bg-gray-100 hover:text-gray-900 transition-colors"
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5 3 12m0 0 7.5-7.5M3 12h18" />
+          </svg>
+          Volver
+        </button>
+
+        <div className="h-9 w-px bg-gray-200 shrink-0" />
+
+        <div className="min-w-0">
+          <h1 className="text-base font-bold text-gray-900 truncate leading-tight">
+            {formatPatientName(medicionesPatient.patient_name)}
+          </h1>
+          <p className="text-xs truncate">
+            <span className="text-gray-400">Fecha:</span>{' '}
+            <span className="text-gray-600">{fmtFecha(estudioActual?.created_at) ?? '—'}</span>
+            {estudioActual?.descripcion && (
+              <>
+                <span className="mx-2 text-gray-300">·</span>
+                <span className="text-gray-400">Descripción:</span>{' '}
+                <span className="text-gray-600">{estudioActual.descripcion}</span>
+              </>
+            )}
+          </p>
         </div>
 
-        {patients.length > 0 && (
-          <div className="bg-white rounded-lg shadow overflow-hidden">
-            <p className="px-4 py-2 text-[11px] font-semibold text-gray-500 uppercase tracking-wider border-b border-gray-100">
-              Pacientes ({total})
-            </p>
-            <ul className="divide-y divide-gray-100 max-h-56 overflow-y-auto">
-              {patients.map((pac) => (
-                <li key={pac.patient_id}>
-                  <button
-                    onClick={() => cargarEstudios(pac)}
-                    className={`w-full text-left px-4 py-2.5 text-sm transition-colors ${
-                      medicionesPatient?.patient_id === pac.patient_id
-                        ? 'bg-blue-50 text-blue-800 font-medium'
-                        : 'text-gray-700 hover:bg-gray-50'
-                    }`}
-                  >
-                    <span className="block truncate">{pac.patient_name}</span>
-                    <span className="block text-[11px] text-gray-400">{pac.num_studies} estudio(s)</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-
-        {medicionesPatient && (
-          <div className="bg-white rounded-lg shadow overflow-hidden">
-            <p className="px-4 py-2 text-[11px] font-semibold text-gray-500 uppercase tracking-wider border-b border-gray-100">
-              Estudios
-            </p>
-            {loadingEstudios ? (
-              <p className="px-4 py-3 text-sm text-gray-400">Cargando...</p>
-            ) : estudios.length === 0 ? (
-              <p className="px-4 py-3 text-sm text-gray-400">Sin estudios</p>
+        {estudioActual && estudioActual.estado !== 'Procesando' && (
+          <button
+            onClick={() => setConfirmDeleteId(estudioActual.estudio_id)}
+            disabled={deletingEstudioId === estudioActual.estudio_id}
+            title="Eliminar estudio"
+            className="ml-auto shrink-0 p-1.5 text-gray-300 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors disabled:text-gray-200"
+          >
+            {deletingEstudioId === estudioActual.estudio_id ? (
+              <svg className="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+              </svg>
             ) : (
-              <ul className="divide-y divide-gray-100 max-h-72 overflow-y-auto">
-                {estudios.map((est) => {
-                  const activo = resultadosEstudioId === est.estudio_id;
-                  const finalizado = est.estado === 'Finalizado';
-                  return (
-                    <li
-                      key={est.estudio_id}
-                      className={`flex items-center group ${activo ? 'bg-blue-50' : finalizado ? 'hover:bg-gray-50' : ''}`}
-                    >
-                      <button
-                        onClick={() => finalizado && irAResultados(est.estudio_id)}
-                        disabled={!finalizado}
-                        className={`flex-1 min-w-0 text-left pl-4 py-2.5 ${finalizado ? '' : 'cursor-not-allowed'}`}
-                      >
-                        <span className={`block text-sm ${activo ? 'text-blue-800 font-medium' : finalizado ? 'text-gray-700' : 'text-gray-400'}`}>
-                          {est.created_at
-                            ? new Date(est.created_at).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' })
-                            : `Estudio #${est.estudio_id}`}
-                        </span>
-                        <span className="block text-[11px] text-gray-400 truncate">
-                          {est.descripcion || `#${est.estudio_id}`} · {est.estado}
-                        </span>
-                      </button>
-                      {est.estado !== 'Procesando' && (
-                        <button
-                          onClick={() => setConfirmDeleteId(est.estudio_id)}
-                          disabled={deletingEstudioId === est.estudio_id}
-                          title="Eliminar estudio"
-                          className="px-3 py-2.5 text-gray-300 hover:text-red-600 focus:text-red-600 transition-colors disabled:text-gray-200"
-                        >
-                          {deletingEstudioId === est.estudio_id ? (
-                            <svg className="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24">
-                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                            </svg>
-                          ) : (
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                              <path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" />
-                            </svg>
-                          )}
-                        </button>
-                      )}
-                    </li>
-                  );
-                })}
-              </ul>
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" />
+              </svg>
             )}
-          </div>
+          </button>
         )}
-      </aside>
+      </div>
 
-      {/* Detalle */}
-      <section className="flex-1 min-w-0 bg-white rounded-lg shadow">
-        {resultadosEstudioId ? (
-          <>
-            <div className="px-6 py-4 border-b border-gray-200">
-              <h2 className="text-lg font-bold text-gray-900">Resultados de Medición</h2>
-              <p className="text-sm text-gray-500">
-                {medicionesPatient ? `${medicionesPatient.patient_name} · ` : ''}Estudio #{resultadosEstudioId}
-              </p>
-            </div>
-            <ResultadosMedicion estudioId={resultadosEstudioId} />
-          </>
-        ) : (
-          <div className="px-6 py-20 text-center">
-            <p className="text-gray-500 font-medium">Ningún estudio seleccionado</p>
-            <p className="text-sm text-gray-400 mt-1">
-              Buscá un paciente y elegí uno de sus estudios finalizados.
-            </p>
-          </div>
-        )}
-      </section>
+      {estudiosError && (
+        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm">
+          {estudiosError}
+        </div>
+      )}
+
+      <ResultadosMedicion estudioId={resultadosEstudioId!} />
 
       {confirmDeleteId !== null && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[80]">
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[80]" {...cierreConfirmar}>
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm mx-6 overflow-hidden">
             <div className="px-6 py-5">
               <div className="flex items-center gap-3 mb-3">
@@ -443,7 +380,7 @@ export default function AppShell({ vista = 'buscar' }: { vista?: 'buscar' | 'med
                 Cancelar
               </button>
               <button
-                onClick={() => borrarDesdeRail(confirmDeleteId)}
+                onClick={() => borrarDesdeResultados(confirmDeleteId)}
                 className="px-4 py-2 text-sm bg-red-600 text-white font-medium rounded-md hover:bg-red-700"
               >
                 Eliminar
@@ -455,9 +392,10 @@ export default function AppShell({ vista = 'buscar' }: { vista?: 'buscar' | 'med
     </div>
   );
 
+  if (resultadosEstudioId && vistaResultados) return vistaResultados;
+
   return (
-    <div className={vista === 'mediciones' ? '' : 'max-w-5xl mx-auto'}>
-        {vista === 'mediciones' ? vistaMediciones : (<>
+    <div className="max-w-5xl mx-auto">
         {/* Filtros */}
         <div className="bg-white rounded-lg shadow p-6 mb-6">
           <div className="flex gap-4 items-end">
@@ -499,13 +437,13 @@ export default function AppShell({ vista = 'buscar' }: { vista?: 'buscar' | 'med
             <thead className="bg-gray-50">
               <tr>
                 <th className="w-1/5 px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  ID Paciente
-                </th>
-                <th className="w-1/5 px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Nombre
                 </th>
                 <th className="w-1/5 px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Cantidad de Estudios
+                  ID Paciente
+                </th>
+                <th className="w-1/5 px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Estudios
                 </th>
                 <th className="w-1/5 px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Series
@@ -529,10 +467,10 @@ export default function AppShell({ vista = 'buscar' }: { vista?: 'buscar' | 'med
                       className="hover:bg-gray-50 transition-colors"
                     >
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 text-center">
-                        {patient.patient_id}
+                        {formatPatientName(patient.patient_name)}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 text-center">
-                        {formatPatientName(patient.patient_name)}
+                        {patient.patient_id}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 text-center">
                         {patient.num_studies}
@@ -579,10 +517,8 @@ export default function AppShell({ vista = 'buscar' }: { vista?: 'buscar' | 'med
         )}
 
         {/* Modal de Series del Paciente */}
-        </>)}
-
         {showSeriesModal && selectedPatient && (
-          <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
+          <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50" {...cierreSeries}>
             <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl mx-4 max-h-[80vh] flex flex-col">
               {/* Header */}
               <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
@@ -623,16 +559,13 @@ export default function AppShell({ vista = 'buscar' }: { vista?: 'buscar' | 'med
                         <thead className="bg-gray-50">
                           <tr>
                             <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
-                              Serie #
-                            </th>
-                            <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
                               Descripción
                             </th>
                             <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
                               Modalidad
                             </th>
                             <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
-                              # Instancias
+                              Instancias
                             </th>
                             <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
                               Ver
@@ -647,9 +580,6 @@ export default function AppShell({ vista = 'buscar' }: { vista?: 'buscar' | 'med
                                 onClick={() => handleSeriesClick(seriesItem)}
                                 className="hover:bg-blue-50 cursor-pointer transition-colors"
                               >
-                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 text-center">
-                                  {seriesItem.series_number}
-                                </td>
                                 <td className="px-6 py-4 text-sm text-gray-900 text-center">
                                   {seriesItem.description}
                                 </td>
@@ -675,7 +605,7 @@ export default function AppShell({ vista = 'buscar' }: { vista?: 'buscar' | 'med
                             ))
                           ) : (
                             <tr>
-                              <td colSpan={5} className="px-6 py-4 text-center text-sm text-gray-500">
+                              <td colSpan={4} className="px-6 py-4 text-center text-sm text-gray-500">
                                 No se encontraron series para este paciente
                               </td>
                             </tr>
@@ -688,11 +618,6 @@ export default function AppShell({ vista = 'buscar' }: { vista?: 'buscar' | 'med
                   <div className="p-6">
                     {/* Serie info compacta */}
                     <div className="flex items-center gap-3 mb-5 bg-blue-50 border border-blue-100 rounded-lg px-4 py-3">
-                      <div className="flex items-center justify-center w-10 h-10 bg-blue-100 rounded-lg shrink-0">
-                        <svg className="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
-                          <path strokeLinecap="round" strokeLinejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909M3.75 21h16.5A2.25 2.25 0 0 0 22.5 18.75V5.25A2.25 2.25 0 0 0 20.25 3H3.75A2.25 2.25 0 0 0 1.5 5.25v13.5A2.25 2.25 0 0 0 3.75 21Z" />
-                        </svg>
-                      </div>
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-semibold text-gray-900 truncate">{selectedSeries.description}</p>
                         <div className="flex gap-4 mt-0.5">
@@ -760,19 +685,12 @@ export default function AppShell({ vista = 'buscar' }: { vista?: 'buscar' | 'med
               </div>
 
               {/* Footer */}
+              {!(selectedSeries && analysisSuccess) && (
               <div className="px-6 py-3 border-t border-gray-200 flex items-center justify-between">
                 {!selectedSeries ? (
-                  <>
-                    <span className="text-sm text-gray-500">
-                      {series.length} {series.length === 1 ? 'serie' : 'series'}
-                    </span>
-                    <button
-                      onClick={handleCloseSeriesModal}
-                      className="px-4 py-2 text-sm border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
-                    >
-                      Cerrar
-                    </button>
-                  </>
+                  <span className="text-sm text-gray-500">
+                    {series.length} {series.length === 1 ? 'serie' : 'series'}
+                  </span>
                 ) : !analysisSuccess ? (
                   <>
                     <button
@@ -790,25 +708,16 @@ export default function AppShell({ vista = 'buscar' }: { vista?: 'buscar' | 'med
                       {isAnalyzing ? 'Procesando...' : `Analizar (${angleGroups.filter(g => g.angles.every(a => selectedAngles.includes(a.id))).length} secciones)`}
                     </button>
                   </>
-                ) : (
-                  <>
-                    <span />
-                    <button
-                      onClick={handleCloseSeriesModal}
-                      className="px-4 py-2 text-sm bg-blue-600 text-white font-medium rounded-md hover:bg-blue-700"
-                    >
-                      Cerrar
-                    </button>
-                  </>
-                )}
+                ) : null}
               </div>
+              )}
             </div>
           </div>
         )}
 
         {/* Modal de Mediciones del Paciente */}
         {showMedicionesModal && medicionesPatient && (
-          <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
+          <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50" {...cierreMediciones}>
             <div className="bg-white rounded-lg shadow-xl w-full max-w-4xl mx-4 max-h-[80vh] flex flex-col relative">
               {/* Header */}
               <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
@@ -857,16 +766,20 @@ export default function AppShell({ vista = 'buscar' }: { vista?: 'buscar' | 'med
                           Estado
                         </th>
                         <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
-                          Resultados
-                        </th>
-                        <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
                           Eliminar
                         </th>
                       </tr>
                     </thead>
                     <tbody className="bg-white divide-y divide-gray-200">
                       {estudios.map((estudio) => (
-                        <tr key={estudio.estudio_id} className="hover:bg-gray-50 transition-colors">
+                        <tr
+                          key={estudio.estudio_id}
+                          onClick={() => estudio.estado === 'Finalizado' && irAResultados(estudio.estudio_id)}
+                          title={estudio.estado === 'Finalizado' ? 'Ver resultados' : undefined}
+                          className={`transition-colors ${
+                            estudio.estado === 'Finalizado' ? 'hover:bg-blue-50 cursor-pointer' : 'hover:bg-gray-50'
+                          }`}
+                        >
                           <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 text-center">
                             {estudio.created_at ? new Date(estudio.created_at).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '-'}
                           </td>
@@ -887,25 +800,9 @@ export default function AppShell({ vista = 'buscar' }: { vista?: 'buscar' | 'med
                             </span>
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap text-sm text-center">
-                            {estudio.estado === 'Finalizado' ? (
-                              <button
-                                onClick={() => irAResultados(estudio.estudio_id)}
-                                className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-md transition-colors"
-                                title="Ver resultados"
-                              >
-                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                                  <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z" />
-                                  <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
-                                </svg>
-                              </button>
-                            ) : (
-                              <span className="text-gray-300">-</span>
-                            )}
-                          </td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm text-center">
                             {estudio.estado !== 'Procesando' && (
                               <button
-                                onClick={() => setConfirmDeleteId(estudio.estudio_id)}
+                                onClick={(e) => { e.stopPropagation(); setConfirmDeleteId(estudio.estudio_id); }}
                                 disabled={deletingEstudioId === estudio.estudio_id}
                                 className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors disabled:opacity-50"
                                 title="Eliminar estudio"
@@ -939,21 +836,15 @@ export default function AppShell({ vista = 'buscar' }: { vista?: 'buscar' | 'med
               </div>
 
               {/* Footer */}
-              <div className="px-6 py-3 border-t border-gray-200 flex items-center justify-between">
+              <div className="px-6 py-3 border-t border-gray-200">
                 <span className="text-sm text-gray-500">
                   {estudios.length} {estudios.length === 1 ? 'estudio' : 'estudios'}
                 </span>
-                <button
-                  onClick={handleCloseMedicionesModal}
-                  className="px-4 py-2 text-sm border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
-                >
-                  Cerrar
-                </button>
               </div>
 
               {/* Modal de confirmación de borrado */}
               {confirmDeleteId !== null && (
-                <div className="absolute inset-0 bg-black/40 flex items-center justify-center rounded-lg z-10">
+                <div className="absolute inset-0 bg-black/40 flex items-center justify-center rounded-lg z-10" {...cierreConfirmarModal}>
                   <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm mx-6 overflow-hidden">
                     <div className="px-6 py-5">
                       <div className="flex items-center gap-3 mb-3">
