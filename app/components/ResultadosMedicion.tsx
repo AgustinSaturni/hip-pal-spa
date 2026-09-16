@@ -13,6 +13,19 @@ import { useCierreDeFondo } from './useCierreDeFondo';
  * Menu de opciones de una fila del reporte. El panel se dibuja en un portal con
  * posicion fija: dentro de la tabla lo recortaria el overflow de la tarjeta.
  */
+function Spinner({ className = 'h-8 w-8' }: { className?: string }) {
+  return (
+    <svg className={`animate-spin text-white ${className}`} fill="none" viewBox="0 0 24 24">
+      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+    </svg>
+  )
+}
+
+// El modal llega a 95vh; el resto de sus filas (cabecera, tabs, panel de
+// angulos, leyenda y footer) suman ~340px que la imagen no puede ocupar.
+const ALTO_MAX_IMAGEN = 'calc(95vh - 340px)'
+
 function MenuAcciones({ opciones }: { opciones: Array<{ label: string; onClick: () => void }> }) {
   const [abierto, setAbierto] = useState(false);
   const [pos, setPos] = useState<{ top: number; right: number } | null>(null);
@@ -97,6 +110,10 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
   const [editorOpen, setEditorOpen] = useState(false)
   const [editorImageUrl, setEditorImageUrl] = useState<string | null>(null)
   const [editorLoadingImage, setEditorLoadingImage] = useState(false)
+  // La imagen del <img> ya decodifico. Entre que llega la URL nueva y que el
+  // navegador la pinta sigue viendose la anterior, y el overlay SVG no puede
+  // dibujar los puntos del lado nuevo sobre la imagen del viejo.
+  const [editorImagenLista, setEditorImagenLista] = useState(false)
   const [editorLabel, setEditorLabel] = useState('')
   const [editorNivel, setEditorNivel] = useState('')
   const [editorPlano, setEditorPlano] = useState<'axial' | 'sagital' | 'coronal' | 'alfa'>('axial')
@@ -108,6 +125,10 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
   const [editorOriginalPuntos, setEditorOriginalPuntos] = useState<Record<string, { x: number; y: number } | null>>({})
   const [editorAngulos, setEditorAngulos] = useState<Record<string, number>>({})
   const [editorOriginalAngulos, setEditorOriginalAngulos] = useState<Record<string, number>>({})
+  // Sagital y alfa se editan un lado a la vez, pero el editor deja cambiar de
+  // lado sin cerrar. Lo corregido en el lado que se deja se guarda aca para no
+  // perderlo en silencio: al guardar se persisten todos los lados tocados.
+  const [editorPendientes, setEditorPendientes] = useState<Record<string, { puntos: Record<string, Pt | null>; angulos: Record<string, number> }>>({})
   // Dimensiones naturales de la imagen: sagital (512x437) y coronal (512x438) no son
   // cuadradas, y medir angulos sobre coordenadas normalizadas ahi desvia ~5 grados.
   const [editorImgDims, setEditorImgDims] = useState<{ w: number; h: number } | null>(null)
@@ -469,23 +490,22 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
     ]
   }
 
-  const handleOpenEditorSagital = async (lado: 'der' | 'izq') => {
+  // Carga un lado en el editor. `pendiente` son los puntos a medio corregir de
+  // una visita anterior a ese lado; los originales salen siempre de lo guardado
+  // porque el recalculo se ancla ahi.
+  const cargarLadoSagital = async (lado: 'der' | 'izq', pendiente?: { puntos: Record<string, Pt | null>; angulos: Record<string, number> }) => {
     const sag = resultados?.angulos_sagitales
     const puntos = sag?.puntos?.[lado] as Record<string, Pt | null> | undefined
-    if (!puntos) return
+    if (!puntos) return false
     const angulos = { centro_borde_anterior: sag.centro_borde_anterior?.[lado] ?? 0 }
-    setEditorPlano('sagital')
     setEditorLado(lado)
     setEditorImgDims(null)
-    setEditorLabel(`Plano Sagital — ${lado === 'der' ? 'Derecho' : 'Izquierdo'}`)
-    setEditorPuntos(puntos)
+    setEditorPuntos(pendiente?.puntos ?? puntos)
     setEditorOriginalPuntos(puntos)
-    setEditorAngulos(angulos)
+    setEditorAngulos(pendiente?.angulos ?? angulos)
     setEditorOriginalAngulos(angulos)
-    setEditorOpen(true)
     setEditorLoadingImage(true)
-    setEditorImageUrl(null)
-    setEditorSaveError(null)
+    setEditorImagenLista(false)
     try {
       const clave = resultados.imagenes?.[`angulo_centro_borde_anterior_${lado === 'der' ? 'derecho' : 'izquierdo'}`]
       if (!clave) throw new Error()
@@ -493,26 +513,32 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
       setEditorImageUrl((await res.json()).url)
     } catch { setEditorImageUrl(null) }
     finally { setEditorLoadingImage(false) }
+    return true
   }
 
-  const handleOpenEditorAlfa = async (hora: string, lado: 'der' | 'izq') => {
+  const handleOpenEditorSagital = async (lado: 'der' | 'izq') => {
+    setEditorPlano('sagital')
+    setEditorLabel('Plano Sagital — Centro-Borde Anterior')
+    setEditorPendientes({})
+    setEditorSaveError(null)
+    setEditorImageUrl(null)
+    setEditorOpen(true)
+    await cargarLadoSagital(lado)
+  }
+
+  const cargarLadoAlfa = async (hora: string, lado: 'der' | 'izq', pendiente?: { puntos: Record<string, Pt | null>; angulos: Record<string, number> }) => {
     const h = resultados?.angulos_alfa?.[hora]?.[lado]
     const puntos = h?.puntos as Record<string, Pt | null> | undefined
-    if (!puntos) return
+    if (!puntos) return false
     const angulos = { anterior: h.anterior ?? 0, posterior: h.posterior ?? 0 }
-    setEditorPlano('alfa')
-    setEditorHora(hora)
     setEditorLado(lado)
     setEditorImgDims(null)
-    setEditorLabel(`Ángulo Alfa — ${hora.replace('_', ' ')} ${lado === 'der' ? 'Derecho' : 'Izquierdo'}`)
-    setEditorPuntos(puntos)
+    setEditorPuntos(pendiente?.puntos ?? puntos)
     setEditorOriginalPuntos(puntos)
-    setEditorAngulos(angulos)
+    setEditorAngulos(pendiente?.angulos ?? angulos)
     setEditorOriginalAngulos(angulos)
-    setEditorOpen(true)
     setEditorLoadingImage(true)
-    setEditorImageUrl(null)
-    setEditorSaveError(null)
+    setEditorImagenLista(false)
     try {
       const clave = resultados.imagenes?.[`alfa_${hora}_${lado === 'der' ? 'derecho' : 'izquierdo'}`]
       if (!clave) throw new Error()
@@ -520,6 +546,39 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
       setEditorImageUrl((await res.json()).url)
     } catch { setEditorImageUrl(null) }
     finally { setEditorLoadingImage(false) }
+    return true
+  }
+
+  const handleOpenEditorAlfa = async (hora: string, lado: 'der' | 'izq') => {
+    setEditorPlano('alfa')
+    setEditorHora(hora)
+    setEditorLabel(`Ángulo Alfa — ${hora.replace('_', ' ')}`)
+    setEditorPendientes({})
+    setEditorSaveError(null)
+    setEditorImageUrl(null)
+    setEditorOpen(true)
+    await cargarLadoAlfa(hora, lado)
+  }
+
+  // Lados que tienen puntos guardados, o sea que se pueden corregir.
+  const ladosEditables = (): Array<'der' | 'izq'> => {
+    if (editorPlano === 'sagital') {
+      return (['der', 'izq'] as const).filter(l => resultados?.angulos_sagitales?.puntos?.[l])
+    }
+    if (editorPlano === 'alfa') {
+      return (['der', 'izq'] as const).filter(l => resultados?.angulos_alfa?.[editorHora]?.[l]?.puntos)
+    }
+    return []
+  }
+
+  const cambiarLadoEditor = async (lado: 'der' | 'izq') => {
+    if (lado === editorLado || editorLoadingImage) return
+    const guardados = editorPuntos !== editorOriginalPuntos
+      ? { ...editorPendientes, [editorLado]: { puntos: editorPuntos, angulos: editorAngulos } }
+      : editorPendientes
+    setEditorPendientes(guardados)
+    if (editorPlano === 'sagital') await cargarLadoSagital(lado, guardados[lado])
+    else if (editorPlano === 'alfa') await cargarLadoAlfa(editorHora, lado, guardados[lado])
   }
 
   const handleOpenEditorCoronal = async (variante: 'lateral' | 'inclinacion') => {
@@ -545,6 +604,7 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
     setEditorOpen(true)
     setEditorLoadingImage(true)
     setEditorImageUrl(null)
+    setEditorImagenLista(false)
     setEditorSaveError(null)
     try {
       const clave = resultados.imagenes?.[
@@ -578,6 +638,7 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
     setEditorOpen(true)
     setEditorLoadingImage(true)
     setEditorImageUrl(null)
+    setEditorImagenLista(false)
     setEditorSaveError(null)
     try {
       const clave = resultados.imagenes?.[imageKey]
@@ -631,14 +692,20 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
     setSavingEditor(true)
     setEditorSaveError(null)
     const updated = JSON.parse(JSON.stringify(resultados))
+    // El lado visible mas los que quedaron a medio corregir al cambiar de tab.
+    const porLado = { ...editorPendientes, [editorLado]: { puntos: editorPuntos, angulos: editorAngulos } }
     if (editorPlano === 'sagital') {
-      updated.angulos_sagitales.centro_borde_anterior[editorLado] = editorAngulos.centro_borde_anterior
-      updated.angulos_sagitales.puntos[editorLado] = editorPuntos
+      for (const [lado, c] of Object.entries(porLado)) {
+        updated.angulos_sagitales.centro_borde_anterior[lado] = c.angulos.centro_borde_anterior
+        updated.angulos_sagitales.puntos[lado] = c.puntos
+      }
     } else if (editorPlano === 'alfa') {
-      const h = updated.angulos_alfa[editorHora][editorLado]
-      h.anterior = editorAngulos.anterior
-      h.posterior = editorAngulos.posterior
-      h.puntos = editorPuntos
+      for (const [lado, c] of Object.entries(porLado)) {
+        const h = updated.angulos_alfa[editorHora][lado]
+        h.anterior = c.angulos.anterior
+        h.posterior = c.angulos.posterior
+        h.puntos = c.puntos
+      }
     } else if (editorPlano === 'coronal') {
       const c = updated.angulos_coronales
       for (const lado of ['der', 'izq'] as const) {
@@ -853,10 +920,12 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
                     </td>
                     <td className={tdAcc}>
                       <MenuAcciones
-                        opciones={resultados.angulos_sagitales?.puntos ? [
-                          { label: 'Corregir derecho', onClick: () => handleOpenEditorSagital('der') },
-                          { label: 'Corregir izquierdo', onClick: () => handleOpenEditorSagital('izq') },
-                        ] : []}
+                        opciones={(() => {
+                          const lados = (['der', 'izq'] as const).filter(l => resultados.angulos_sagitales?.puntos?.[l])
+                          return lados.length
+                            ? [{ label: 'Corregir ángulos', onClick: () => handleOpenEditorSagital(lados[0]) }]
+                            : []
+                        })()}
                       />
                     </td>
                   </tr>
@@ -981,12 +1050,12 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
                     </td>
                     <td className={tdAcc}>
                       <MenuAcciones
-                        opciones={(['der', 'izq'] as const)
-                          .filter(l => val[l]?.puntos)
-                          .map(l => ({
-                            label: `Corregir ${l === 'der' ? 'derecho' : 'izquierdo'}`,
-                            onClick: () => handleOpenEditorAlfa(hora, l),
-                          }))}
+                        opciones={(() => {
+                          const lados = (['der', 'izq'] as const).filter(l => val[l]?.puntos)
+                          return lados.length
+                            ? [{ label: 'Corregir ángulos', onClick: () => handleOpenEditorAlfa(hora, lados[0]) }]
+                            : []
+                        })()}
                       />
                     </td>
                   </tr>
@@ -1143,6 +1212,33 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
                 </button>
               </div>
 
+              {/* Selector de lado: sagital y alfa se editan de a un lado */}
+              {ladosEditables().length > 1 && (
+                <div className="flex border-b border-gray-100">
+                  {ladosEditables().map((l) => {
+                    const activo = editorLado === l
+                    const tocado = !!editorPendientes[l] || (activo && editorPuntos !== editorOriginalPuntos)
+                    return (
+                      <button
+                        key={l}
+                        onClick={() => cambiarLadoEditor(l)}
+                        disabled={editorLoadingImage}
+                        className={`flex-1 px-6 py-2.5 text-sm text-center border-b-2 transition-colors disabled:cursor-wait ${
+                          activo
+                            ? 'border-amber-500 bg-white font-semibold text-gray-900'
+                            : 'border-transparent bg-gray-50 text-gray-500 hover:bg-gray-100'
+                        }`}
+                      >
+                        {l === 'der' ? 'Derecho' : 'Izquierdo'}
+                        {tocado && (
+                          <span className="ml-2 inline-block w-1.5 h-1.5 rounded-full bg-amber-500 align-middle" title="Con cambios sin guardar" />
+                        )}
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
+
               {/* Angle values panel */}
               <div className="px-5 py-3 bg-gray-50 border-b border-gray-100 flex gap-6 flex-wrap">
                 {editorMetricas().map(({ key, label, color }) => (
@@ -1160,32 +1256,36 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
               </div>
 
               {/* Image + SVG overlay */}
-              <div className="flex-1 bg-black flex items-center justify-center" style={{ minHeight: 400 }}>
-                {editorLoadingImage ? (
-                  <div className="flex items-center justify-center h-64">
-                    <svg className="animate-spin h-8 w-8 text-white" fill="none" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                    </svg>
-                  </div>
-                ) : editorImageUrl ? (
+              <div className="relative flex-1 min-h-0 overflow-hidden bg-black flex items-center justify-center" style={{ minHeight: 240 }}>
+                {!editorImageUrl ? (
+                  editorLoadingImage
+                    ? <Spinner />
+                    : <p className="text-gray-400 text-sm">No se pudo cargar la imagen</p>
+                ) : (
                   <div className="w-full h-full flex items-center justify-center overflow-hidden">
                     {/* inline-block wrapper shrinks to img size; SVG absolute covers it exactly */}
-                    <div style={{ display: 'inline-block', position: 'relative', maxHeight: '75vh', maxWidth: '100%', lineHeight: 0 }}>
+                    <div style={{ display: 'inline-block', position: 'relative', maxHeight: ALTO_MAX_IMAGEN, maxWidth: '100%', lineHeight: 0 }}>
                       <img
                         src={editorImageUrl}
                         alt={editorLabel}
-                        style={{ display: 'block', maxHeight: '75vh', maxWidth: '100%' }}
+                        style={{ display: 'block', maxHeight: ALTO_MAX_IMAGEN, maxWidth: '100%' }}
                         draggable={false}
-                        onLoad={(e) => setEditorImgDims({
-                          w: e.currentTarget.naturalWidth,
-                          h: e.currentTarget.naturalHeight,
-                        })}
+                        onLoad={(e) => {
+                          setEditorImgDims({
+                            w: e.currentTarget.naturalWidth,
+                            h: e.currentTarget.naturalHeight,
+                          })
+                          setEditorImagenLista(true)
+                        }}
                       />
                       {/* SVG overlay — position absolute garantiza que cubre exactamente la imagen */}
                       <svg
                         ref={svgRef}
-                        style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', cursor: editorDragging ? 'grabbing' : 'default' }}
+                        style={{
+                          position: 'absolute', top: 0, left: 0, width: '100%', height: '100%',
+                          cursor: editorDragging ? 'grabbing' : 'default',
+                          visibility: editorImagenLista ? 'visible' : 'hidden',
+                        }}
                         viewBox="0 0 100 100"
                         preserveAspectRatio="none"
                         onMouseMove={handleEditorSvgMouseMove}
@@ -1247,8 +1347,15 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
                       </svg>
                     </div>
                   </div>
-                ) : (
-                  <p className="text-gray-400 text-sm">No se pudo cargar la imagen</p>
+                )}
+
+                {/* Velo de carga sobre la imagen anterior. Descartarla hacia
+                    colapsar el area al alto del spinner y estirarla de nuevo al
+                    llegar la nueva: el modal daba un salto en cada cambio de lado. */}
+                {editorImageUrl && (editorLoadingImage || !editorImagenLista) && (
+                  <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
+                    <Spinner />
+                  </div>
                 )}
               </div>
 
@@ -1268,7 +1375,14 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
                 </div>
                 <div className="flex gap-2">
                   <button
-                    onClick={() => { setEditorPuntos(editorOriginalPuntos); setEditorAngulos(editorOriginalAngulos); }}
+                    onClick={() => {
+                      setEditorPuntos(editorOriginalPuntos)
+                      setEditorAngulos(editorOriginalAngulos)
+                      setEditorPendientes(prev => {
+                        const { [editorLado]: _, ...resto } = prev
+                        return resto
+                      })
+                    }}
                     className="px-4 py-2 text-sm border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
                   >
                     Restablecer
