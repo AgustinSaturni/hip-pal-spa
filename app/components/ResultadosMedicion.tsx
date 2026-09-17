@@ -39,6 +39,25 @@ const RECTAS_SAGITAL: Recta[] = [
   { from: 'centroide', to: 'punto_filo', color: '#ef4444', extend: 2 },
 ]
 
+// Coronal hornea dos imagenes distintas que comparten los mismos puntos: una
+// por angulo.
+const RECTAS_CORONAL_LATERAL: Recta[] = [
+  { from: 'centroide_der', to: 'filo_superior_der', color: '#ef4444' },
+  { from: 'centroide_izq', to: 'filo_superior_izq', color: '#ef4444' },
+]
+const RECTAS_CORONAL_INCLINACION: Recta[] = [
+  { from: 'filo_inferior_der', to: 'filo_superior_der', color: '#eab308' },
+  { from: 'filo_inferior_izq', to: 'filo_superior_izq', color: '#eab308' },
+]
+
+// Alfa: los colores horneados se invertian segun el lado; el overlay usa
+// siempre rojo = anterior y verde = posterior, que es mas legible.
+const RECTAS_ALFA: Recta[] = [
+  { from: 'centroide', to: 'punto_horario', color: '#ef4444' },
+  { from: 'centroide', to: 'punto_antihorario', color: '#22c55e' },
+  { from: 'centroide', to: 'punto_bisectriz', color: '#3b82f6' },
+]
+
 // Overlay de solo lectura sobre una imagen ya renderizada. Desde que el backend
 // dejo de hornear las rectas en el PNG, esta es la unica forma de verlas fuera
 // del editor. pointer-events none para no comerse los clicks del modal.
@@ -66,6 +85,40 @@ function OverlayRectas({ puntos, rectas }: { puntos: Record<string, { x: number;
         )
       })}
     </svg>
+  )
+}
+
+/**
+ * Imagen del modal de visualizacion con sus rectas encima.
+ *
+ * El estado de carga vive aca adentro y se resetea solo: quien la usa le pasa
+ * key={src}, asi cambiar de imagen remonta el componente. Coordinar un flag
+ * global con los cuatro caminos que cambian la imagen era fragil, y bastaba con
+ * que uno no lo reseteara para que el overlay no apareciera nunca.
+ *
+ * Esperar a que la imagen decodifique no es cosmetico: hasta entonces el <img>
+ * puede seguir mostrando la anterior, y las rectas caerian sobre la anatomia
+ * equivocada.
+ */
+function ImagenConRectas({
+  src, alt, overlay,
+}: {
+  src: string
+  alt: string
+  overlay: { puntos: Record<string, { x: number; y: number } | null>; rectas: Recta[] } | null
+}) {
+  const [cargada, setCargada] = useState(false)
+  return (
+    <div style={{ position: 'relative', display: 'inline-block', lineHeight: 0 }}>
+      <img
+        src={src}
+        alt={alt}
+        className="max-h-[55vh] object-contain"
+        style={{ display: 'block' }}
+        onLoad={() => setCargada(true)}
+      />
+      {cargada && overlay && <OverlayRectas puntos={overlay.puntos} rectas={overlay.rectas} />}
+    </div>
   )
 }
 
@@ -189,10 +242,6 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
   // Rectas a dibujar sobre la imagen del modal. Es funcion del tab porque en
   // sagital y alfa cada lado tiene sus propios puntos.
   const [imagenOverlay, setImagenOverlay] = useState<{ fn: (tab: number) => { puntos: Record<string, Pt | null>; rectas: Recta[] } | null } | null>(null)
-  // URL que el <img> termino de decodificar. Se compara contra imagenUrl en vez
-  // de usar un booleano: asi no depende de acordarse de bajar el flag en cada
-  // camino que cambia la imagen, y el overlay nunca cae sobre la anterior.
-  const [imagenCargada, setImagenCargada] = useState<string | null>(null)
 
   const handleVerImagen = async (clave: string, label: string, valores?: { izq?: number | string; der?: number | string }, tablaValores?: Array<{ label: string; der?: number | string; izq?: number | string }>, corregir?: (tab: number) => void, overlay?: (tab: number) => { puntos: Record<string, Pt | null>; rectas: Recta[] } | null) => {
     setLoadingImagen(true);
@@ -446,11 +495,7 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
     // sin extension. Los colores horneados se invierten segun el lado; el overlay
     // usa siempre rojo=anterior y verde=posterior, que es mas legible.
     if (editorPlano === 'alfa') return {
-      lineas: [
-        { from: 'centroide', to: 'punto_horario', color: '#ef4444' },
-        { from: 'centroide', to: 'punto_antihorario', color: '#22c55e' },
-        { from: 'centroide', to: 'punto_bisectriz', color: '#3b82f6' },
-      ],
+      lineas: RECTAS_ALFA,
       handles: [
         { key: 'punto_horario', color: '#ef4444' },
         { key: 'punto_antihorario', color: '#22c55e' },
@@ -460,10 +505,7 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
     }
     if (editorPlano === 'coronal') return editorVariante === 'inclinacion'
       ? {
-        lineas: [
-          { from: 'filo_inferior_der', to: 'filo_superior_der', color: '#eab308' },
-          { from: 'filo_inferior_izq', to: 'filo_superior_izq', color: '#eab308' },
-        ],
+        lineas: RECTAS_CORONAL_INCLINACION,
         handles: [
           { key: 'filo_superior_der', color: '#ef4444' }, { key: 'filo_superior_izq', color: '#ef4444' },
           { key: 'filo_inferior_der', color: '#eab308' }, { key: 'filo_inferior_izq', color: '#eab308' },
@@ -471,10 +513,7 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
         fijos: ['centroide_der', 'centroide_izq'],
       }
       : {
-        lineas: [
-          { from: 'centroide_der', to: 'filo_superior_der', color: '#ef4444' },
-          { from: 'centroide_izq', to: 'filo_superior_izq', color: '#ef4444' },
-        ],
+        lineas: RECTAS_CORONAL_LATERAL,
         handles: [
           { key: 'filo_superior_der', color: '#ef4444' }, { key: 'filo_superior_izq', color: '#ef4444' },
         ],
@@ -850,11 +889,11 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
     }
     if (!resultados) return null;
 
-    const OjoBtn = ({ clave, label, valores, corregir }: { clave: string; label: string; valores?: { izq?: number | string; der?: number | string }; corregir?: (tab: number) => void }) => {
+    const OjoBtn = ({ clave, label, valores, corregir, overlay }: { clave: string; label: string; valores?: { izq?: number | string; der?: number | string }; corregir?: (tab: number) => void; overlay?: (tab: number) => { puntos: Record<string, Pt | null>; rectas: Recta[] } | null }) => {
       if (!resultados.imagenes || !resultados.imagenes[clave]) return null;
       return (
         <button
-          onClick={() => handleVerImagen(resultados.imagenes[clave], label, valores, undefined, corregir)}
+          onClick={() => handleVerImagen(resultados.imagenes[clave], label, valores, undefined, corregir, overlay)}
           className="p-1 text-gray-300 hover:text-blue-500 transition-colors"
           title="Ver imagen"
         >
@@ -925,6 +964,9 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
                         label="Centro-Borde Lateral"
                         valores={{ izq: resultados.angulos_coronales.centroBordeLateral.izq, der: resultados.angulos_coronales.centroBordeLateral.der }}
                         corregir={resultados.angulos_coronales?.puntos ? () => handleOpenEditorCoronal('lateral') : undefined}
+                        overlay={resultados.angulos_coronales?.puntos
+                          ? () => ({ puntos: resultados.angulos_coronales.puntos, rectas: RECTAS_CORONAL_LATERAL })
+                          : undefined}
                       />
                     </td>
                     <td className={tdAcc}>
@@ -943,6 +985,9 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
                         label="Inclinación Acetabular"
                         valores={{ izq: resultados.angulos_coronales.inclinacionAcetabular.izq, der: resultados.angulos_coronales.inclinacionAcetabular.der }}
                         corregir={resultados.angulos_coronales?.puntos ? () => handleOpenEditorCoronal('inclinacion') : undefined}
+                        overlay={resultados.angulos_coronales?.puntos
+                          ? () => ({ puntos: resultados.angulos_coronales.puntos, rectas: RECTAS_CORONAL_INCLINACION })
+                          : undefined}
                       />
                     </td>
                     <td className={tdAcc}>
@@ -1143,6 +1188,10 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
                               handleOpenEditorAlfa(hora, lados.includes(visible) ? visible : lados[0])
                             }
                           })()}
+                          overlay={(tab: number) => {
+                            const puntos = val[tab === 1 ? 'izq' : 'der']?.puntos
+                            return puntos ? { puntos, rectas: RECTAS_ALFA } : null
+                          }}
                         />
                       </div>
                     </td>
@@ -1290,25 +1339,14 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
 
             {/* Imagen */}
             <div className="relative p-4 bg-black flex items-center justify-center min-h-48">
-              {imagenUrl && (() => {
-                const ov = imagenCargada === imagenUrl ? imagenOverlay?.fn(activeTab) : null
-                return (
-                  <div style={{ position: 'relative', display: 'inline-block', lineHeight: 0 }}>
-                    {/* El ref cubre la imagen ya decodificada al montar: ahi el
-                        evento load pudo dispararse antes de que React lo
-                        escuchara y el overlay no aparecia nunca. */}
-                    <img
-                      src={imagenUrl}
-                      alt={imagenLabel}
-                      className="max-h-[55vh] object-contain"
-                      style={{ display: 'block' }}
-                      ref={(el) => { if (el?.complete && el.naturalWidth) setImagenCargada(el.src) }}
-                      onLoad={(e) => setImagenCargada(e.currentTarget.src)}
-                    />
-                    {ov && <OverlayRectas puntos={ov.puntos} rectas={ov.rectas} />}
-                  </div>
-                )
-              })()}
+              {imagenUrl && (
+                <ImagenConRectas
+                  key={imagenUrl}
+                  src={imagenUrl}
+                  alt={imagenLabel}
+                  overlay={imagenOverlay?.fn(activeTab) ?? null}
+                />
+              )}
               {loadingImagen && (
                 <div className={`${imagenUrl ? 'absolute inset-0 bg-black/60' : ''} flex items-center justify-center`}>
                   <svg className="animate-spin h-8 w-8 text-white" fill="none" viewBox="0 0 24 24">
