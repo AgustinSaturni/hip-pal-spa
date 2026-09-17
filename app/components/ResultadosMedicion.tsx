@@ -22,6 +22,53 @@ function Spinner({ className = 'h-8 w-8' }: { className?: string }) {
   )
 }
 
+type Recta = { from: string; to: string; color: string; extend?: number }
+
+// Las rectas de los angulos axiales. El editor las hace arrastrables; el modal
+// de visualizacion las dibuja igual pero sin handles.
+const RECTAS_AXIAL: Recta[] = [
+  { from: 'centroide_der', to: 'aasa_der', color: '#ef4444' },
+  { from: 'centroide_der', to: 'pasa_der', color: '#3b82f6' },
+  { from: 'centroide_izq', to: 'aasa_izq', color: '#ef4444' },
+  { from: 'centroide_izq', to: 'pasa_izq', color: '#3b82f6' },
+]
+
+// La recta del centro-borde anterior. El backend la dibujaba extendida al
+// doble, asi que el overlay hace lo mismo para caer donde estaba.
+const RECTAS_SAGITAL: Recta[] = [
+  { from: 'centroide', to: 'punto_filo', color: '#ef4444', extend: 2 },
+]
+
+// Overlay de solo lectura sobre una imagen ya renderizada. Desde que el backend
+// dejo de hornear las rectas en el PNG, esta es la unica forma de verlas fuera
+// del editor. pointer-events none para no comerse los clicks del modal.
+function OverlayRectas({ puntos, rectas }: { puntos: Record<string, { x: number; y: number } | null>; rectas: Recta[] }) {
+  return (
+    <svg
+      style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none' }}
+      viewBox="0 0 100 100"
+      preserveAspectRatio="none"
+    >
+      {rectas.map(({ from, to, color, extend }) => {
+        const c = puntos[from]
+        const q = puntos[to]
+        if (!c || !q) return null
+        const k = extend ?? 1
+        return (
+          <line
+            key={`${from}-${to}`}
+            x1={c.x * 100} y1={c.y * 100}
+            x2={(c.x + (q.x - c.x) * k) * 100} y2={(c.y + (q.y - c.y) * k) * 100}
+            stroke={color}
+            strokeWidth="0.6"
+            opacity="0.9"
+          />
+        )
+      })}
+    </svg>
+  )
+}
+
 // El modal llega a 95vh; el resto de sus filas (cabecera, tabs, panel de
 // angulos, leyenda y footer) suman ~340px que la imagen no puede ocupar.
 const ALTO_MAX_IMAGEN = 'calc(95vh - 340px)'
@@ -139,14 +186,22 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
   // Que editor abre lo que el modal de imagen esta mostrando. Recibe el tab
   // activo para que sagital y alfa entren por el lado que se esta viendo.
   const [imagenCorregir, setImagenCorregir] = useState<{ fn: (tab: number) => void } | null>(null)
+  // Rectas a dibujar sobre la imagen del modal. Es funcion del tab porque en
+  // sagital y alfa cada lado tiene sus propios puntos.
+  const [imagenOverlay, setImagenOverlay] = useState<{ fn: (tab: number) => { puntos: Record<string, Pt | null>; rectas: Recta[] } | null } | null>(null)
+  // URL que el <img> termino de decodificar. Se compara contra imagenUrl en vez
+  // de usar un booleano: asi no depende de acordarse de bajar el flag en cada
+  // camino que cambia la imagen, y el overlay nunca cae sobre la anterior.
+  const [imagenCargada, setImagenCargada] = useState<string | null>(null)
 
-  const handleVerImagen = async (clave: string, label: string, valores?: { izq?: number | string; der?: number | string }, tablaValores?: Array<{ label: string; der?: number | string; izq?: number | string }>, corregir?: (tab: number) => void) => {
+  const handleVerImagen = async (clave: string, label: string, valores?: { izq?: number | string; der?: number | string }, tablaValores?: Array<{ label: string; der?: number | string; izq?: number | string }>, corregir?: (tab: number) => void, overlay?: (tab: number) => { puntos: Record<string, Pt | null>; rectas: Recta[] } | null) => {
     setLoadingImagen(true);
     setImagenUrl(null);
     setImagenLabel(label);
     setImagenValores(valores ?? null);
     setImagenTablaValores(tablaValores ?? null);
     setImagenCorregir(corregir ? { fn: corregir } : null);
+    setImagenOverlay(overlay ? { fn: overlay } : null);
     try {
       const response = await fetch(`/mediciones/${estudioId}/imagen?clave=${encodeURIComponent(clave)}`);
       if (!response.ok) throw new Error('No se pudo obtener la imagen');
@@ -159,10 +214,11 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
     }
   };
 
-  const handleVerImagenesTabs = async (label: string, tabs: Array<{ clave: string; tabLabel: string; valor?: number | string }>, corregir?: (tab: number) => void) => {
+  const handleVerImagenesTabs = async (label: string, tabs: Array<{ clave: string; tabLabel: string; valor?: number | string }>, corregir?: (tab: number) => void, overlay?: (tab: number) => { puntos: Record<string, Pt | null>; rectas: Recta[] } | null) => {
     setImagenLabel(label);
     setImagenTabs(tabs);
     setImagenCorregir(corregir ? { fn: corregir } : null);
+    setImagenOverlay(overlay ? { fn: overlay } : null);
     setImagenValores(null);
     setActiveTab(0);
     setLoadingImagen(true);
@@ -215,6 +271,7 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
     setImagenTabs(null);
     setActiveTab(0);
     setImagenCorregir(null);
+    setImagenOverlay(null);
   };
 
   // Salto directo de ver a corregir, sin pasar por el menu de la tabla.
@@ -381,7 +438,7 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
     fijos: string[]
   } => {
     if (editorPlano === 'sagital') return {
-      lineas: [{ from: 'centroide', to: 'punto_filo', color: '#ef4444', extend: 2 }],
+      lineas: RECTAS_SAGITAL,
       handles: [{ key: 'punto_filo', color: '#ef4444', extend: 2, desde: 'centroide' }],
       fijos: ['centroide'],
     }
@@ -424,12 +481,7 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
         fijos: ['centroide_der', 'centroide_izq'],
       }
     return {
-      lineas: [
-        { from: 'centroide_der', to: 'aasa_der', color: '#ef4444' },
-        { from: 'centroide_der', to: 'pasa_der', color: '#3b82f6' },
-        { from: 'centroide_izq', to: 'aasa_izq', color: '#ef4444' },
-        { from: 'centroide_izq', to: 'pasa_izq', color: '#3b82f6' },
-      ],
+      lineas: RECTAS_AXIAL,
       handles: [
         { key: 'aasa_der', color: '#ef4444' }, { key: 'pasa_der', color: '#3b82f6' },
         { key: 'aasa_izq', color: '#ef4444' }, { key: 'pasa_izq', color: '#3b82f6' },
@@ -811,11 +863,11 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
       );
     };
 
-    const OjoBtnTabla = ({ clave, label, tabla, corregir }: { clave: string; label: string; tabla: Array<{ label: string; der?: number | string; izq?: number | string }>; corregir?: (tab: number) => void }) => {
+    const OjoBtnTabla = ({ clave, label, tabla, corregir, overlay }: { clave: string; label: string; tabla: Array<{ label: string; der?: number | string; izq?: number | string }>; corregir?: (tab: number) => void; overlay?: (tab: number) => { puntos: Record<string, Pt | null>; rectas: Recta[] } | null }) => {
       if (!resultados.imagenes || !resultados.imagenes[clave]) return null;
       return (
         <button
-          onClick={() => handleVerImagen(resultados.imagenes[clave], label, undefined, tabla, corregir)}
+          onClick={() => handleVerImagen(resultados.imagenes[clave], label, undefined, tabla, corregir, overlay)}
           className="p-1 text-gray-300 hover:text-blue-500 transition-colors"
           title="Ver imagen"
         >
@@ -824,11 +876,11 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
       );
     };
 
-    const OjoBtnTabs = ({ label, tabs, corregir }: { label: string; tabs: Array<{ clave: string; tabLabel: string; valor?: number | string }>; corregir?: (tab: number) => void }) => {
+    const OjoBtnTabs = ({ label, tabs, corregir, overlay }: { label: string; tabs: Array<{ clave: string; tabLabel: string; valor?: number | string }>; corregir?: (tab: number) => void; overlay?: (tab: number) => { puntos: Record<string, Pt | null>; rectas: Recta[] } | null }) => {
       if (!tabs.some(t => resultados.imagenes && resultados.imagenes[t.clave])) return null;
       return (
         <button
-          onClick={() => handleVerImagenesTabs(label, tabs, corregir)}
+          onClick={() => handleVerImagenesTabs(label, tabs, corregir, overlay)}
           className="p-1 text-gray-300 hover:text-blue-500 transition-colors"
           title="Ver imágenes"
         >
@@ -947,6 +999,10 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
                               handleOpenEditorSagital(lados.includes(visible) ? visible : lados[0])
                             }
                           })()}
+                          overlay={(tab: number) => {
+                            const puntos = resultados.angulos_sagitales?.puntos?.[tab === 1 ? 'izq' : 'der']
+                            return puntos ? { puntos, rectas: RECTAS_SAGITAL } : null
+                          }}
                         />
                       </div>
                     </td>
@@ -1016,6 +1072,7 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
                                 izq: v.izq,
                               }))}
                               corregir={hasPuntos ? () => handleOpenEditor(nivel, `angulos_axiales_${nivel}_aasa_pasa`) : undefined}
+                              overlay={hasPuntos ? () => ({ puntos: nivelData.puntos, rectas: RECTAS_AXIAL }) : undefined}
                             />
                           </td>
                           <td className={`${tdAcc} align-middle`} rowSpan={angleEntries.length}>
@@ -1233,9 +1290,25 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
 
             {/* Imagen */}
             <div className="relative p-4 bg-black flex items-center justify-center min-h-48">
-              {imagenUrl && (
-                <img src={imagenUrl} alt={imagenLabel} className="max-h-[55vh] object-contain" />
-              )}
+              {imagenUrl && (() => {
+                const ov = imagenCargada === imagenUrl ? imagenOverlay?.fn(activeTab) : null
+                return (
+                  <div style={{ position: 'relative', display: 'inline-block', lineHeight: 0 }}>
+                    {/* El ref cubre la imagen ya decodificada al montar: ahi el
+                        evento load pudo dispararse antes de que React lo
+                        escuchara y el overlay no aparecia nunca. */}
+                    <img
+                      src={imagenUrl}
+                      alt={imagenLabel}
+                      className="max-h-[55vh] object-contain"
+                      style={{ display: 'block' }}
+                      ref={(el) => { if (el?.complete && el.naturalWidth) setImagenCargada(el.src) }}
+                      onLoad={(e) => setImagenCargada(e.currentTarget.src)}
+                    />
+                    {ov && <OverlayRectas puntos={ov.puntos} rectas={ov.rectas} />}
+                  </div>
+                )
+              })()}
               {loadingImagen && (
                 <div className={`${imagenUrl ? 'absolute inset-0 bg-black/60' : ''} flex items-center justify-center`}>
                   <svg className="animate-spin h-8 w-8 text-white" fill="none" viewBox="0 0 24 24">
