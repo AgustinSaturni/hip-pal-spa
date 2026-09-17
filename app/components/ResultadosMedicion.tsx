@@ -1,11 +1,197 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
+import { useCierreDeFondo } from './useCierreDeFondo';
 
 // Muestra y permite corregir los resultados de una medicion: las tablas de
 // angulos, el modal de imagenes y el editor de puntos sobre la imagen. Se
 // maneja solo: recibe el id del estudio y se encarga de traer los datos y de
 // persistir las correcciones.
+
+/**
+ * Menu de opciones de una fila del reporte. El panel se dibuja en un portal con
+ * posicion fija: dentro de la tabla lo recortaria el overflow de la tarjeta.
+ */
+function Spinner({ className = 'h-8 w-8' }: { className?: string }) {
+  return (
+    <svg className={`animate-spin text-white ${className}`} fill="none" viewBox="0 0 24 24">
+      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+    </svg>
+  )
+}
+
+type Recta = { from: string; to: string; color: string; extend?: number }
+
+// Las rectas de los angulos axiales. El editor las hace arrastrables; el modal
+// de visualizacion las dibuja igual pero sin handles.
+const RECTAS_AXIAL: Recta[] = [
+  { from: 'centroide_der', to: 'aasa_der', color: '#ef4444' },
+  { from: 'centroide_der', to: 'pasa_der', color: '#3b82f6' },
+  { from: 'centroide_izq', to: 'aasa_izq', color: '#ef4444' },
+  { from: 'centroide_izq', to: 'pasa_izq', color: '#3b82f6' },
+]
+
+// La recta del centro-borde anterior. El backend la dibujaba extendida al
+// doble, asi que el overlay hace lo mismo para caer donde estaba.
+const RECTAS_SAGITAL: Recta[] = [
+  { from: 'centroide', to: 'punto_filo', color: '#ef4444', extend: 2 },
+]
+
+// Coronal hornea dos imagenes distintas que comparten los mismos puntos: una
+// por angulo.
+const RECTAS_CORONAL_LATERAL: Recta[] = [
+  { from: 'centroide_der', to: 'filo_superior_der', color: '#ef4444' },
+  { from: 'centroide_izq', to: 'filo_superior_izq', color: '#ef4444' },
+]
+const RECTAS_CORONAL_INCLINACION: Recta[] = [
+  { from: 'filo_inferior_der', to: 'filo_superior_der', color: '#eab308' },
+  { from: 'filo_inferior_izq', to: 'filo_superior_izq', color: '#eab308' },
+]
+
+// Alfa: los colores horneados se invertian segun el lado; el overlay usa
+// siempre rojo = anterior y verde = posterior, que es mas legible.
+const RECTAS_ALFA: Recta[] = [
+  { from: 'centroide', to: 'punto_horario', color: '#ef4444' },
+  { from: 'centroide', to: 'punto_antihorario', color: '#22c55e' },
+  { from: 'centroide', to: 'punto_bisectriz', color: '#3b82f6' },
+]
+
+// Overlay de solo lectura sobre una imagen ya renderizada. Desde que el backend
+// dejo de hornear las rectas en el PNG, esta es la unica forma de verlas fuera
+// del editor. pointer-events none para no comerse los clicks del modal.
+function OverlayRectas({ puntos, rectas }: { puntos: Record<string, { x: number; y: number } | null>; rectas: Recta[] }) {
+  return (
+    <svg
+      style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none' }}
+      viewBox="0 0 100 100"
+      preserveAspectRatio="none"
+    >
+      {rectas.map(({ from, to, color, extend }) => {
+        const c = puntos[from]
+        const q = puntos[to]
+        if (!c || !q) return null
+        const k = extend ?? 1
+        return (
+          <line
+            key={`${from}-${to}`}
+            x1={c.x * 100} y1={c.y * 100}
+            x2={(c.x + (q.x - c.x) * k) * 100} y2={(c.y + (q.y - c.y) * k) * 100}
+            stroke={color}
+            strokeWidth="0.6"
+            opacity="0.9"
+          />
+        )
+      })}
+    </svg>
+  )
+}
+
+/**
+ * Imagen del modal de visualizacion con sus rectas encima.
+ *
+ * El estado de carga vive aca adentro y se resetea solo: quien la usa le pasa
+ * key={src}, asi cambiar de imagen remonta el componente. Coordinar un flag
+ * global con los cuatro caminos que cambian la imagen era fragil, y bastaba con
+ * que uno no lo reseteara para que el overlay no apareciera nunca.
+ *
+ * Esperar a que la imagen decodifique no es cosmetico: hasta entonces el <img>
+ * puede seguir mostrando la anterior, y las rectas caerian sobre la anatomia
+ * equivocada.
+ */
+function ImagenConRectas({
+  src, alt, overlay,
+}: {
+  src: string
+  alt: string
+  overlay: { puntos: Record<string, { x: number; y: number } | null>; rectas: Recta[] } | null
+}) {
+  const [cargada, setCargada] = useState(false)
+  return (
+    <div style={{ position: 'relative', display: 'inline-block', lineHeight: 0 }}>
+      <img
+        src={src}
+        alt={alt}
+        className="max-h-[55vh] object-contain"
+        style={{ display: 'block' }}
+        onLoad={() => setCargada(true)}
+      />
+      {cargada && overlay && <OverlayRectas puntos={overlay.puntos} rectas={overlay.rectas} />}
+    </div>
+  )
+}
+
+// El modal llega a 95vh; el resto de sus filas (cabecera, tabs, panel de
+// angulos, leyenda y footer) suman ~340px que la imagen no puede ocupar.
+const ALTO_MAX_IMAGEN = 'calc(95vh - 340px)'
+
+function MenuAcciones({ opciones }: { opciones: Array<{ label: string; onClick: () => void }> }) {
+  const [abierto, setAbierto] = useState(false);
+  const [pos, setPos] = useState<{ top: number; right: number } | null>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!abierto) return;
+    // Scrollear o redimensionar deja el panel lejos del boton que lo abrio.
+    const cerrar = () => setAbierto(false);
+    window.addEventListener('scroll', cerrar, true);
+    window.addEventListener('resize', cerrar);
+    return () => {
+      window.removeEventListener('scroll', cerrar, true);
+      window.removeEventListener('resize', cerrar);
+    };
+  }, [abierto]);
+
+  if (!opciones.length) return null;
+
+  const alternar = () => {
+    if (abierto) return setAbierto(false);
+    const r = btnRef.current?.getBoundingClientRect();
+    if (r) setPos({ top: r.bottom + 4, right: window.innerWidth - r.right });
+    setAbierto(true);
+  };
+
+  return (
+    <>
+      <button
+        ref={btnRef}
+        onClick={alternar}
+        title="Opciones"
+        className={`p-1 rounded transition-colors ${abierto ? 'text-gray-600 bg-gray-100' : 'text-gray-300 hover:text-gray-600'}`}
+      >
+        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.75a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5ZM12 12.75a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5ZM12 18.75a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5Z" />
+        </svg>
+      </button>
+
+      {abierto && pos && createPortal(
+        <>
+          <div className="fixed inset-0 z-[95]" onClick={() => setAbierto(false)} />
+          <div
+            style={{ position: 'fixed', top: pos.top, right: pos.right }}
+            className="z-[96] min-w-44 bg-white border border-gray-200 rounded-lg shadow-lg py-1"
+          >
+            {opciones.map((o) => (
+              <button
+                key={o.label}
+                onClick={() => { setAbierto(false); o.onClick(); }}
+                className="w-full flex items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+              >
+                <svg className="w-3.5 h-3.5 text-gray-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125" />
+                </svg>
+                {o.label}
+              </button>
+            ))}
+          </div>
+        </>,
+        document.body,
+      )}
+    </>
+  );
+}
+
 export default function ResultadosMedicion({ estudioId }: { estudioId: number | null }) {
   const [resultados, setResultados] = useState<any>(null);
   const [loadingResultados, setLoadingResultados] = useState(false);
@@ -24,6 +210,10 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
   const [editorOpen, setEditorOpen] = useState(false)
   const [editorImageUrl, setEditorImageUrl] = useState<string | null>(null)
   const [editorLoadingImage, setEditorLoadingImage] = useState(false)
+  // La imagen del <img> ya decodifico. Entre que llega la URL nueva y que el
+  // navegador la pinta sigue viendose la anterior, y el overlay SVG no puede
+  // dibujar los puntos del lado nuevo sobre la imagen del viejo.
+  const [editorImagenLista, setEditorImagenLista] = useState(false)
   const [editorLabel, setEditorLabel] = useState('')
   const [editorNivel, setEditorNivel] = useState('')
   const [editorPlano, setEditorPlano] = useState<'axial' | 'sagital' | 'coronal' | 'alfa'>('axial')
@@ -35,6 +225,10 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
   const [editorOriginalPuntos, setEditorOriginalPuntos] = useState<Record<string, { x: number; y: number } | null>>({})
   const [editorAngulos, setEditorAngulos] = useState<Record<string, number>>({})
   const [editorOriginalAngulos, setEditorOriginalAngulos] = useState<Record<string, number>>({})
+  // Sagital y alfa se editan un lado a la vez, pero el editor deja cambiar de
+  // lado sin cerrar. Lo corregido en el lado que se deja se guarda aca para no
+  // perderlo en silencio: al guardar se persisten todos los lados tocados.
+  const [editorPendientes, setEditorPendientes] = useState<Record<string, { puntos: Record<string, Pt | null>; angulos: Record<string, number> }>>({})
   // Dimensiones naturales de la imagen: sagital (512x437) y coronal (512x438) no son
   // cuadradas, y medir angulos sobre coordenadas normalizadas ahi desvia ~5 grados.
   const [editorImgDims, setEditorImgDims] = useState<{ w: number; h: number } | null>(null)
@@ -42,13 +236,21 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
   const [savingEditor, setSavingEditor] = useState(false)
   const [editorSaveError, setEditorSaveError] = useState<string | null>(null)
   const svgRef = useRef<SVGSVGElement>(null)
+  // Que editor abre lo que el modal de imagen esta mostrando. Recibe el tab
+  // activo para que sagital y alfa entren por el lado que se esta viendo.
+  const [imagenCorregir, setImagenCorregir] = useState<{ fn: (tab: number) => void } | null>(null)
+  // Rectas a dibujar sobre la imagen del modal. Es funcion del tab porque en
+  // sagital y alfa cada lado tiene sus propios puntos.
+  const [imagenOverlay, setImagenOverlay] = useState<{ fn: (tab: number) => { puntos: Record<string, Pt | null>; rectas: Recta[] } | null } | null>(null)
 
-  const handleVerImagen = async (clave: string, label: string, valores?: { izq?: number | string; der?: number | string }, tablaValores?: Array<{ label: string; der?: number | string; izq?: number | string }>) => {
+  const handleVerImagen = async (clave: string, label: string, valores?: { izq?: number | string; der?: number | string }, tablaValores?: Array<{ label: string; der?: number | string; izq?: number | string }>, corregir?: (tab: number) => void, overlay?: (tab: number) => { puntos: Record<string, Pt | null>; rectas: Recta[] } | null) => {
     setLoadingImagen(true);
     setImagenUrl(null);
     setImagenLabel(label);
     setImagenValores(valores ?? null);
     setImagenTablaValores(tablaValores ?? null);
+    setImagenCorregir(corregir ? { fn: corregir } : null);
+    setImagenOverlay(overlay ? { fn: overlay } : null);
     try {
       const response = await fetch(`/mediciones/${estudioId}/imagen?clave=${encodeURIComponent(clave)}`);
       if (!response.ok) throw new Error('No se pudo obtener la imagen');
@@ -61,9 +263,11 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
     }
   };
 
-  const handleVerImagenesTabs = async (label: string, tabs: Array<{ clave: string; tabLabel: string; valor?: number | string }>) => {
+  const handleVerImagenesTabs = async (label: string, tabs: Array<{ clave: string; tabLabel: string; valor?: number | string }>, corregir?: (tab: number) => void, overlay?: (tab: number) => { puntos: Record<string, Pt | null>; rectas: Recta[] } | null) => {
     setImagenLabel(label);
     setImagenTabs(tabs);
+    setImagenCorregir(corregir ? { fn: corregir } : null);
+    setImagenOverlay(overlay ? { fn: overlay } : null);
     setImagenValores(null);
     setActiveTab(0);
     setLoadingImagen(true);
@@ -106,6 +310,8 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
     }
   };
 
+  const cierreEditor = useCierreDeFondo(() => setEditorOpen(false));
+
   const handleCerrarImagen = () => {
     setImagenUrl(null);
     setImagenLabel('');
@@ -113,7 +319,19 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
     setImagenTablaValores(null);
     setImagenTabs(null);
     setActiveTab(0);
+    setImagenCorregir(null);
+    setImagenOverlay(null);
   };
+
+  // Salto directo de ver a corregir, sin pasar por el menu de la tabla.
+  const irACorregirDesdeImagen = () => {
+    const corregir = imagenCorregir;
+    const tab = activeTab;
+    handleCerrarImagen();
+    corregir?.fn(tab);
+  };
+
+  const cierreImagen = useCierreDeFondo(handleCerrarImagen);
 
   // ---- Editor SVG ----
   type Pt = { x: number; y: number }
@@ -269,7 +487,7 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
     fijos: string[]
   } => {
     if (editorPlano === 'sagital') return {
-      lineas: [{ from: 'centroide', to: 'punto_filo', color: '#ef4444', extend: 2 }],
+      lineas: RECTAS_SAGITAL,
       handles: [{ key: 'punto_filo', color: '#ef4444', extend: 2, desde: 'centroide' }],
       fijos: ['centroide'],
     }
@@ -277,11 +495,7 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
     // sin extension. Los colores horneados se invierten segun el lado; el overlay
     // usa siempre rojo=anterior y verde=posterior, que es mas legible.
     if (editorPlano === 'alfa') return {
-      lineas: [
-        { from: 'centroide', to: 'punto_horario', color: '#ef4444' },
-        { from: 'centroide', to: 'punto_antihorario', color: '#22c55e' },
-        { from: 'centroide', to: 'punto_bisectriz', color: '#3b82f6' },
-      ],
+      lineas: RECTAS_ALFA,
       handles: [
         { key: 'punto_horario', color: '#ef4444' },
         { key: 'punto_antihorario', color: '#22c55e' },
@@ -291,10 +505,7 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
     }
     if (editorPlano === 'coronal') return editorVariante === 'inclinacion'
       ? {
-        lineas: [
-          { from: 'filo_inferior_der', to: 'filo_superior_der', color: '#eab308' },
-          { from: 'filo_inferior_izq', to: 'filo_superior_izq', color: '#eab308' },
-        ],
+        lineas: RECTAS_CORONAL_INCLINACION,
         handles: [
           { key: 'filo_superior_der', color: '#ef4444' }, { key: 'filo_superior_izq', color: '#ef4444' },
           { key: 'filo_inferior_der', color: '#eab308' }, { key: 'filo_inferior_izq', color: '#eab308' },
@@ -302,22 +513,14 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
         fijos: ['centroide_der', 'centroide_izq'],
       }
       : {
-        lineas: [
-          { from: 'centroide_der', to: 'filo_superior_der', color: '#ef4444' },
-          { from: 'centroide_izq', to: 'filo_superior_izq', color: '#ef4444' },
-        ],
+        lineas: RECTAS_CORONAL_LATERAL,
         handles: [
           { key: 'filo_superior_der', color: '#ef4444' }, { key: 'filo_superior_izq', color: '#ef4444' },
         ],
         fijos: ['centroide_der', 'centroide_izq'],
       }
     return {
-      lineas: [
-        { from: 'centroide_der', to: 'aasa_der', color: '#ef4444' },
-        { from: 'centroide_der', to: 'pasa_der', color: '#3b82f6' },
-        { from: 'centroide_izq', to: 'aasa_izq', color: '#ef4444' },
-        { from: 'centroide_izq', to: 'pasa_izq', color: '#3b82f6' },
-      ],
+      lineas: RECTAS_AXIAL,
       handles: [
         { key: 'aasa_der', color: '#ef4444' }, { key: 'pasa_der', color: '#3b82f6' },
         { key: 'aasa_izq', color: '#ef4444' }, { key: 'pasa_izq', color: '#3b82f6' },
@@ -392,23 +595,22 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
     ]
   }
 
-  const handleOpenEditorSagital = async (lado: 'der' | 'izq') => {
+  // Carga un lado en el editor. `pendiente` son los puntos a medio corregir de
+  // una visita anterior a ese lado; los originales salen siempre de lo guardado
+  // porque el recalculo se ancla ahi.
+  const cargarLadoSagital = async (lado: 'der' | 'izq', pendiente?: { puntos: Record<string, Pt | null>; angulos: Record<string, number> }) => {
     const sag = resultados?.angulos_sagitales
     const puntos = sag?.puntos?.[lado] as Record<string, Pt | null> | undefined
-    if (!puntos) return
+    if (!puntos) return false
     const angulos = { centro_borde_anterior: sag.centro_borde_anterior?.[lado] ?? 0 }
-    setEditorPlano('sagital')
     setEditorLado(lado)
     setEditorImgDims(null)
-    setEditorLabel(`Plano Sagital — ${lado === 'der' ? 'Derecho' : 'Izquierdo'}`)
-    setEditorPuntos(puntos)
+    setEditorPuntos(pendiente?.puntos ?? puntos)
     setEditorOriginalPuntos(puntos)
-    setEditorAngulos(angulos)
+    setEditorAngulos(pendiente?.angulos ?? angulos)
     setEditorOriginalAngulos(angulos)
-    setEditorOpen(true)
     setEditorLoadingImage(true)
-    setEditorImageUrl(null)
-    setEditorSaveError(null)
+    setEditorImagenLista(false)
     try {
       const clave = resultados.imagenes?.[`angulo_centro_borde_anterior_${lado === 'der' ? 'derecho' : 'izquierdo'}`]
       if (!clave) throw new Error()
@@ -416,26 +618,32 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
       setEditorImageUrl((await res.json()).url)
     } catch { setEditorImageUrl(null) }
     finally { setEditorLoadingImage(false) }
+    return true
   }
 
-  const handleOpenEditorAlfa = async (hora: string, lado: 'der' | 'izq') => {
+  const handleOpenEditorSagital = async (lado: 'der' | 'izq') => {
+    setEditorPlano('sagital')
+    setEditorLabel('Plano Sagital — Centro-Borde Anterior')
+    setEditorPendientes({})
+    setEditorSaveError(null)
+    setEditorImageUrl(null)
+    setEditorOpen(true)
+    await cargarLadoSagital(lado)
+  }
+
+  const cargarLadoAlfa = async (hora: string, lado: 'der' | 'izq', pendiente?: { puntos: Record<string, Pt | null>; angulos: Record<string, number> }) => {
     const h = resultados?.angulos_alfa?.[hora]?.[lado]
     const puntos = h?.puntos as Record<string, Pt | null> | undefined
-    if (!puntos) return
+    if (!puntos) return false
     const angulos = { anterior: h.anterior ?? 0, posterior: h.posterior ?? 0 }
-    setEditorPlano('alfa')
-    setEditorHora(hora)
     setEditorLado(lado)
     setEditorImgDims(null)
-    setEditorLabel(`Ángulo Alfa — ${hora.replace('_', ' ')} ${lado === 'der' ? 'Derecho' : 'Izquierdo'}`)
-    setEditorPuntos(puntos)
+    setEditorPuntos(pendiente?.puntos ?? puntos)
     setEditorOriginalPuntos(puntos)
-    setEditorAngulos(angulos)
+    setEditorAngulos(pendiente?.angulos ?? angulos)
     setEditorOriginalAngulos(angulos)
-    setEditorOpen(true)
     setEditorLoadingImage(true)
-    setEditorImageUrl(null)
-    setEditorSaveError(null)
+    setEditorImagenLista(false)
     try {
       const clave = resultados.imagenes?.[`alfa_${hora}_${lado === 'der' ? 'derecho' : 'izquierdo'}`]
       if (!clave) throw new Error()
@@ -443,6 +651,39 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
       setEditorImageUrl((await res.json()).url)
     } catch { setEditorImageUrl(null) }
     finally { setEditorLoadingImage(false) }
+    return true
+  }
+
+  const handleOpenEditorAlfa = async (hora: string, lado: 'der' | 'izq') => {
+    setEditorPlano('alfa')
+    setEditorHora(hora)
+    setEditorLabel(`Ángulo Alfa — ${hora.replace('_', ' ')}`)
+    setEditorPendientes({})
+    setEditorSaveError(null)
+    setEditorImageUrl(null)
+    setEditorOpen(true)
+    await cargarLadoAlfa(hora, lado)
+  }
+
+  // Lados que tienen puntos guardados, o sea que se pueden corregir.
+  const ladosEditables = (): Array<'der' | 'izq'> => {
+    if (editorPlano === 'sagital') {
+      return (['der', 'izq'] as const).filter(l => resultados?.angulos_sagitales?.puntos?.[l])
+    }
+    if (editorPlano === 'alfa') {
+      return (['der', 'izq'] as const).filter(l => resultados?.angulos_alfa?.[editorHora]?.[l]?.puntos)
+    }
+    return []
+  }
+
+  const cambiarLadoEditor = async (lado: 'der' | 'izq') => {
+    if (lado === editorLado || editorLoadingImage) return
+    const guardados = editorPuntos !== editorOriginalPuntos
+      ? { ...editorPendientes, [editorLado]: { puntos: editorPuntos, angulos: editorAngulos } }
+      : editorPendientes
+    setEditorPendientes(guardados)
+    if (editorPlano === 'sagital') await cargarLadoSagital(lado, guardados[lado])
+    else if (editorPlano === 'alfa') await cargarLadoAlfa(editorHora, lado, guardados[lado])
   }
 
   const handleOpenEditorCoronal = async (variante: 'lateral' | 'inclinacion') => {
@@ -468,6 +709,7 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
     setEditorOpen(true)
     setEditorLoadingImage(true)
     setEditorImageUrl(null)
+    setEditorImagenLista(false)
     setEditorSaveError(null)
     try {
       const clave = resultados.imagenes?.[
@@ -501,6 +743,7 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
     setEditorOpen(true)
     setEditorLoadingImage(true)
     setEditorImageUrl(null)
+    setEditorImagenLista(false)
     setEditorSaveError(null)
     try {
       const clave = resultados.imagenes?.[imageKey]
@@ -554,14 +797,20 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
     setSavingEditor(true)
     setEditorSaveError(null)
     const updated = JSON.parse(JSON.stringify(resultados))
+    // El lado visible mas los que quedaron a medio corregir al cambiar de tab.
+    const porLado = { ...editorPendientes, [editorLado]: { puntos: editorPuntos, angulos: editorAngulos } }
     if (editorPlano === 'sagital') {
-      updated.angulos_sagitales.centro_borde_anterior[editorLado] = editorAngulos.centro_borde_anterior
-      updated.angulos_sagitales.puntos[editorLado] = editorPuntos
+      for (const [lado, c] of Object.entries(porLado)) {
+        updated.angulos_sagitales.centro_borde_anterior[lado] = c.angulos.centro_borde_anterior
+        updated.angulos_sagitales.puntos[lado] = c.puntos
+      }
     } else if (editorPlano === 'alfa') {
-      const h = updated.angulos_alfa[editorHora][editorLado]
-      h.anterior = editorAngulos.anterior
-      h.posterior = editorAngulos.posterior
-      h.puntos = editorPuntos
+      for (const [lado, c] of Object.entries(porLado)) {
+        const h = updated.angulos_alfa[editorHora][lado]
+        h.anterior = c.angulos.anterior
+        h.posterior = c.angulos.posterior
+        h.puntos = c.puntos
+      }
     } else if (editorPlano === 'coronal') {
       const c = updated.angulos_coronales
       for (const lado of ['der', 'izq'] as const) {
@@ -595,432 +844,377 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
     }
   }
 
-  // Contenido de los resultados de una medicion. Vive en la pestaña Mediciones,
-  // a ancho completo; antes estaba embutido en un modal de 3xl.
-  const renderResultados = () => (
-    <div className="p-6">
-                {loadingResultados ? (
-                  <div className="p-8 text-center">
-                    <p className="text-gray-500">Cargando resultados...</p>
-                  </div>
-                ) : resultadosError ? (
-                  <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded text-sm">
-                    {resultadosError}
-                  </div>
-                ) : resultados ? (
-                  <div className="space-y-6">
+  // --- Piezas visuales del reporte -------------------------------------------
 
-                    {/* Modal de imagen */}
-                    {(imagenUrl || loadingImagen) && (
-                      <div className="fixed inset-0 bg-black/75 flex items-center justify-center z-[70]" onClick={handleCerrarImagen}>
-                        <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl mx-4 flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
-                          {/* Header */}
-                          <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
-                            <div>
-                              <p className="text-xs font-semibold text-blue-600 uppercase tracking-wider mb-0.5">Visualización</p>
-                              <h3 className="text-base font-bold text-gray-900">{imagenLabel || 'Imagen del ángulo'}</h3>
-                            </div>
-                            <button
-                              onClick={handleCerrarImagen}
-                              className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
-                            >
-                              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                              </svg>
-                            </button>
-                          </div>
-
-                          {/* Tabs, Tabla, o Valores simples */}
-                          {imagenTablaValores ? (
-                            <div className="bg-gray-50 border-b border-gray-100 px-4 py-3">
-                              <table className="w-full text-sm">
-                                <thead>
-                                  <tr>
-                                    <th className="text-left text-xs text-gray-400 uppercase tracking-wide pb-2 font-medium">Ángulo</th>
-                                    <th className="text-center text-xs text-gray-400 uppercase tracking-wide pb-2 font-medium">Derecho</th>
-                                    <th className="text-center text-xs text-gray-400 uppercase tracking-wide pb-2 font-medium">Izquierdo</th>
-                                  </tr>
-                                </thead>
-                                <tbody className="divide-y divide-gray-200">
-                                  {imagenTablaValores.map((row) => (
-                                    <tr key={row.label}>
-                                      <td className="py-1.5 text-gray-600 font-medium">{row.label}</td>
-                                      <td className="py-1.5 text-center text-gray-900 font-bold">{row.der !== undefined ? `${row.der}°` : '—'}</td>
-                                      <td className="py-1.5 text-center text-gray-900 font-bold">{row.izq !== undefined ? `${row.izq}°` : '—'}</td>
-                                    </tr>
-                                  ))}
-                                </tbody>
-                              </table>
-                            </div>
-                          ) : imagenTabs && imagenTabs.length > 1 ? (
-                            <div className="flex border-b border-gray-100">
-                              {imagenTabs.map((tab, i) => (
-                                <button
-                                  key={tab.clave}
-                                  onClick={() => handleTabChange(i)}
-                                  className={`flex-1 px-6 py-3 text-center transition-colors border-b-2 ${
-                                    activeTab === i
-                                      ? 'border-blue-500 bg-white'
-                                      : 'border-transparent bg-gray-50 hover:bg-gray-100'
-                                  }`}
-                                >
-                                  <p className={`text-xs uppercase tracking-wide mb-1 ${activeTab === i ? 'text-blue-600 font-semibold' : 'text-gray-400'}`}>{tab.tabLabel}</p>
-                                  {tab.valor !== undefined && (
-                                    <p className={`text-2xl font-bold ${activeTab === i ? 'text-gray-900' : 'text-gray-400'}`}>{tab.valor}°</p>
-                                  )}
-                                </button>
-                              ))}
-                            </div>
-                          ) : imagenValores && (imagenValores.izq !== undefined || imagenValores.der !== undefined) ? (
-                            <div className="flex divide-x divide-gray-100 bg-gray-50 border-b border-gray-100">
-                              {imagenValores.der !== undefined && (
-                                <div className="flex-1 px-6 py-3 text-center">
-                                  <p className="text-xs text-gray-400 uppercase tracking-wide mb-1">Derecho</p>
-                                  <p className="text-2xl font-bold text-gray-900">{imagenValores.der}°</p>
-                                </div>
-                              )}
-                              {imagenValores.izq !== undefined && (
-                                <div className="flex-1 px-6 py-3 text-center">
-                                  <p className="text-xs text-gray-400 uppercase tracking-wide mb-1">Izquierdo</p>
-                                  <p className="text-2xl font-bold text-gray-900">{imagenValores.izq}°</p>
-                                </div>
-                              )}
-                            </div>
-                          ) : null}
-
-                          {/* Imagen */}
-                          <div className="relative p-4 bg-black flex items-center justify-center min-h-48">
-                            {imagenUrl && (
-                              <img src={imagenUrl} alt={imagenLabel} className="max-h-[55vh] object-contain" />
-                            )}
-                            {loadingImagen && (
-                              <div className={`${imagenUrl ? 'absolute inset-0 bg-black/60' : ''} flex items-center justify-center`}>
-                                <svg className="animate-spin h-8 w-8 text-white" fill="none" viewBox="0 0 24 24">
-                                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                                </svg>
-                              </div>
-                            )}
-                          </div>
-
-                          {/* Footer */}
-                          <div className="px-5 py-3 flex justify-end border-t border-gray-100">
-                            <button
-                              onClick={handleCerrarImagen}
-                              className="px-4 py-2 text-sm border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
-                            >
-                              Cerrar
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Ojito helper */}
-                    {(() => {
-                      const eyeIcon = (
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z" />
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
-                        </svg>
-                      );
-
-                      const BtnCorregir = ({ onClick }: { onClick: () => void }) => (
-                        <button
-                          onClick={onClick}
-                          className="p-1 text-gray-300 hover:text-amber-500 transition-colors"
-                          title="Corregir ángulos"
-                        >
-                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125" />
-                          </svg>
-                        </button>
-                      );
-
-                      const OjoBtn = ({ clave, label, valores }: { clave: string; label: string; valores?: { izq?: number | string; der?: number | string } }) => {
-                        const tiene = resultados.imagenes && resultados.imagenes[clave];
-                        if (!tiene) return null;
-                        return (
-                          <button
-                            onClick={() => handleVerImagen(resultados.imagenes[clave], label, valores)}
-                            className="p-1 text-gray-300 hover:text-blue-500 transition-colors"
-                            title="Ver imagen"
-                          >
-                            {eyeIcon}
-                          </button>
-                        );
-                      };
-
-                      const OjoBtnTabla = ({ clave, label, tabla }: { clave: string; label: string; tabla: Array<{ label: string; der?: number | string; izq?: number | string }> }) => {
-                        const tiene = resultados.imagenes && resultados.imagenes[clave];
-                        if (!tiene) return null;
-                        return (
-                          <button
-                            onClick={() => handleVerImagen(resultados.imagenes[clave], label, undefined, tabla)}
-                            className="p-1 text-gray-300 hover:text-blue-500 transition-colors"
-                            title="Ver imagen"
-                          >
-                            {eyeIcon}
-                          </button>
-                        );
-                      };
-
-                      const OjoBtnTabs = ({ label, tabs }: { label: string; tabs: Array<{ clave: string; tabLabel: string; valor?: number | string }> }) => {
-                        const tieneAlguna = tabs.some(t => resultados.imagenes && resultados.imagenes[t.clave]);
-                        if (!tieneAlguna) return null;
-                        return (
-                          <button
-                            onClick={() => handleVerImagenesTabs(label, tabs)}
-                            className="p-1 text-gray-300 hover:text-blue-500 transition-colors"
-                            title="Ver imágenes"
-                          >
-                            {eyeIcon}
-                          </button>
-                        );
-                      };
-
-                      return (
-                        <>
-                          {/* Angulos Coronales */}
-                          {resultados.angulos_coronales && (
-                            <div>
-                              <h3 className="text-sm font-bold text-gray-800 uppercase tracking-wide mb-3 flex items-center gap-2">
-                                <span className="w-2 h-2 bg-blue-500 rounded-full"></span>
-                                Plano Coronal
-                              </h3>
-                              <div className="bg-gray-50 rounded-lg overflow-hidden">
-                                <table className="min-w-full text-sm">
-                                  <thead>
-                                    <tr className="border-b border-gray-200">
-                                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">Angulo</th>
-                                      <th className="px-4 py-2 text-center text-xs font-medium text-gray-500">Izq</th>
-                                      <th className="px-4 py-2 text-center text-xs font-medium text-gray-500">Der</th>
-                                      <th className="px-4 py-2 text-center text-xs font-medium text-gray-500">Imagen</th>
-                                    </tr>
-                                  </thead>
-                                  <tbody className="divide-y divide-gray-200">
-                                    {resultados.angulos_coronales.centroBordeLateral && (
-                                      <tr>
-                                        <td className="px-4 py-2 text-gray-700">Centro-Borde Lateral</td>
-                                        <td className="px-4 py-2 text-center text-gray-900 font-medium">{resultados.angulos_coronales.centroBordeLateral.izq}°</td>
-                                        <td className="px-4 py-2 text-center text-gray-900 font-medium">{resultados.angulos_coronales.centroBordeLateral.der}°</td>
-                                        <td className="px-4 py-2 text-center">
-                                          <div className="flex items-center justify-center gap-1">
-                                            <OjoBtn clave="angulo_centro_borde_lateral" label="Centro-Borde Lateral" valores={{ izq: resultados.angulos_coronales.centroBordeLateral.izq, der: resultados.angulos_coronales.centroBordeLateral.der }} />
-                                            {resultados.angulos_coronales?.puntos && <BtnCorregir onClick={() => handleOpenEditorCoronal('lateral')} />}
-                                          </div>
-                                        </td>
-                                      </tr>
-                                    )}
-                                    {resultados.angulos_coronales.inclinacionAcetabular && (
-                                      <tr>
-                                        <td className="px-4 py-2 text-gray-700">Inclinacion Acetabular</td>
-                                        <td className="px-4 py-2 text-center text-gray-900 font-medium">{resultados.angulos_coronales.inclinacionAcetabular.izq}°</td>
-                                        <td className="px-4 py-2 text-center text-gray-900 font-medium">{resultados.angulos_coronales.inclinacionAcetabular.der}°</td>
-                                        <td className="px-4 py-2 text-center">
-                                          <div className="flex items-center justify-center gap-1">
-                                            <OjoBtn clave="inclinacion_acetabular" label="Inclinación Acetabular" valores={{ izq: resultados.angulos_coronales.inclinacionAcetabular.izq, der: resultados.angulos_coronales.inclinacionAcetabular.der }} />
-                                            {resultados.angulos_coronales?.puntos && <BtnCorregir onClick={() => handleOpenEditorCoronal('inclinacion')} />}
-                                          </div>
-                                        </td>
-                                      </tr>
-                                    )}
-                                  </tbody>
-                                </table>
-                              </div>
-                            </div>
-                          )}
-
-                          {/* Angulos Axiales */}
-                          {resultados.angulos_axiales && (
-                            <div>
-                              <h3 className="text-sm font-bold text-gray-800 uppercase tracking-wide mb-3 flex items-center gap-2">
-                                <span className="w-2 h-2 bg-green-500 rounded-full"></span>
-                                Plano Axial
-                              </h3>
-                              <div className="bg-gray-50 rounded-lg overflow-hidden">
-                                <table className="min-w-full text-sm">
-                                  <thead>
-                                    <tr className="border-b border-gray-200">
-                                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">Nivel</th>
-                                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">Angulo</th>
-                                      <th className="px-4 py-2 text-center text-xs font-medium text-gray-500">Izq</th>
-                                      <th className="px-4 py-2 text-center text-xs font-medium text-gray-500">Der</th>
-                                      <th className="px-4 py-2 text-center text-xs font-medium text-gray-500">Imagen</th>
-                                    </tr>
-                                  </thead>
-                                  <tbody className="divide-y divide-gray-200">
-                                    {(['proximal', 'intermedio', 'ecuatorial'] as const).filter(n => resultados.angulos_axiales[n]).flatMap((nivel) => {
-                                      const nivelData: any = resultados.angulos_axiales[nivel];
-                                      const angleEntries = Object.entries(nivelData).filter(([k]) => k !== 'puntos') as [string, any][];
-                                      const hasPuntos = !!nivelData.puntos;
-                                      return angleEntries.map(([angulo, val]: [string, any], i) => (
-                                        <tr key={`${nivel}-${angulo}`}>
-                                          {i === 0 && (
-                                            <td className="px-4 py-2 text-gray-700 font-medium capitalize align-middle" rowSpan={angleEntries.length}>
-                                              {nivel}
-                                            </td>
-                                          )}
-                                          <td className="px-4 py-2 text-gray-700 uppercase">{angulo}</td>
-                                          <td className="px-4 py-2 text-center text-gray-900 font-medium">{val.izq}°</td>
-                                          <td className="px-4 py-2 text-center text-gray-900 font-medium">{val.der}°</td>
-                                          {i === 0 ? (
-                                            <td className="px-4 py-2 text-center align-middle" rowSpan={angleEntries.length}>
-                                              <div className="flex items-center justify-center gap-1">
-                                                <OjoBtnTabla
-                                                  clave={`angulos_axiales_${nivel}_aasa_pasa`}
-                                                  label={`Plano Axial — ${nivel}`}
-                                                  tabla={angleEntries.map(([ang, v]: [string, any]) => ({
-                                                    label: ang.toUpperCase(),
-                                                    der: v.der,
-                                                    izq: v.izq,
-                                                  }))}
-                                                />
-                                                {hasPuntos && (
-                                                  <button
-                                                    onClick={() => handleOpenEditor(nivel, `angulos_axiales_${nivel}_aasa_pasa`)}
-                                                    className="p-1 text-gray-300 hover:text-amber-500 transition-colors"
-                                                    title="Corregir ángulos"
-                                                  >
-                                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                                                      <path strokeLinecap="round" strokeLinejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125" />
-                                                    </svg>
-                                                  </button>
-                                                )}
-                                              </div>
-                                            </td>
-                                          ) : null}
-                                        </tr>
-                                      ));
-                                    })}
-                                  </tbody>
-                                </table>
-                              </div>
-                            </div>
-                          )}
-
-                          {/* Angulos Sagitales */}
-                          {resultados.angulos_sagitales && (
-                            <div>
-                              <h3 className="text-sm font-bold text-gray-800 uppercase tracking-wide mb-3 flex items-center gap-2">
-                                <span className="w-2 h-2 bg-purple-500 rounded-full"></span>
-                                Plano Sagital
-                              </h3>
-                              <div className="bg-gray-50 rounded-lg overflow-hidden">
-                                <table className="min-w-full text-sm">
-                                  <thead>
-                                    <tr className="border-b border-gray-200">
-                                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">Angulo</th>
-                                      <th className="px-4 py-2 text-center text-xs font-medium text-gray-500">Izq</th>
-                                      <th className="px-4 py-2 text-center text-xs font-medium text-gray-500">Der</th>
-                                      <th className="px-4 py-2 text-center text-xs font-medium text-gray-500">Imagen</th>
-                                    </tr>
-                                  </thead>
-                                  <tbody className="divide-y divide-gray-200">
-                                    {Object.entries(resultados.angulos_sagitales).filter(([k]) => k !== 'puntos').map(([key, val]: [string, any]) => (
-                                      <tr key={key}>
-                                        <td className="px-4 py-2 text-gray-700">
-                                          {key === 'centro_borde_anterior' ? 'Centro-Borde Anterior' : key}
-                                        </td>
-                                        <td className="px-4 py-2 text-center text-gray-900 font-medium">{val.izq}°</td>
-                                        <td className="px-4 py-2 text-center text-gray-900 font-medium">{val.der}°</td>
-                                        <td className="px-4 py-2 text-center">
-                                          <div className="flex items-center justify-center gap-1">
-                                            <OjoBtnTabs
-                                              label="Centro-Borde Anterior"
-                                              tabs={[
-                                                { clave: 'angulo_centro_borde_anterior_derecho', tabLabel: 'Derecho', valor: val.der },
-                                                { clave: 'angulo_centro_borde_anterior_izquierdo', tabLabel: 'Izquierdo', valor: val.izq },
-                                              ]}
-                                            />
-                                            {resultados.angulos_sagitales?.puntos && (['der', 'izq'] as const).map(lado => (
-                                              <button
-                                                key={lado}
-                                                onClick={() => handleOpenEditorSagital(lado)}
-                                                className="px-1 text-[10px] font-semibold text-gray-300 hover:text-amber-500 transition-colors"
-                                                title={`Corregir ángulo ${lado === 'der' ? 'derecho' : 'izquierdo'}`}
-                                              >
-                                                {lado === 'der' ? 'D' : 'I'}
-                                              </button>
-                                            ))}
-                                          </div>
-                                        </td>
-                                      </tr>
-                                    ))}
-                                  </tbody>
-                                </table>
-                              </div>
-                            </div>
-                          )}
-
-                          {/* Angulo Alfa */}
-                          {resultados.angulos_alfa && (
-                            <div>
-                              <h3 className="text-sm font-bold text-gray-800 uppercase tracking-wide mb-3 flex items-center gap-2">
-                                <span className="w-2 h-2 bg-orange-500 rounded-full"></span>
-                                Angulo Alfa
-                              </h3>
-                              <div className="bg-gray-50 rounded-lg overflow-hidden">
-                                <table className="min-w-full text-sm">
-                                  <thead>
-                                    <tr className="border-b border-gray-200">
-                                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">Hora</th>
-                                      <th className="px-4 py-2 text-center text-xs font-medium text-gray-500" colSpan={2}>Izq</th>
-                                      <th className="px-4 py-2 text-center text-xs font-medium text-gray-500" colSpan={2}>Der</th>
-                                      <th className="px-4 py-2 text-center text-xs font-medium text-gray-500">Imagen</th>
-                                    </tr>
-                                    <tr className="border-b border-gray-200">
-                                      <th></th>
-                                      <th className="px-4 py-1 text-center text-xs text-gray-400">Ant</th>
-                                      <th className="px-4 py-1 text-center text-xs text-gray-400">Post</th>
-                                      <th className="px-4 py-1 text-center text-xs text-gray-400">Ant</th>
-                                      <th className="px-4 py-1 text-center text-xs text-gray-400">Post</th>
-                                      <th></th>
-                                    </tr>
-                                  </thead>
-                                  <tbody className="divide-y divide-gray-200">
-                                    {Object.entries(resultados.angulos_alfa).map(([hora, val]: [string, any]) => (
-                                      <tr key={hora}>
-                                        <td className="px-4 py-2 text-gray-700 capitalize">{hora.replace('_', ' ')}</td>
-                                        <td className="px-4 py-2 text-center text-gray-900 font-medium">{val.izq?.anterior}°</td>
-                                        <td className="px-4 py-2 text-center text-gray-900 font-medium">{val.izq?.posterior}°</td>
-                                        <td className="px-4 py-2 text-center text-gray-900 font-medium">{val.der?.anterior}°</td>
-                                        <td className="px-4 py-2 text-center text-gray-900 font-medium">{val.der?.posterior}°</td>
-                                        <td className="px-4 py-2 text-center">
-                                          <div className="flex items-center justify-center gap-1">
-                                            <OjoBtnTabs
-                                              label={`Ángulo Alfa ${hora.replace('_', ' ')}`}
-                                              tabs={[
-                                                { clave: `alfa_${hora}_derecho`, tabLabel: 'Derecho', valor: val.der?.anterior },
-                                                { clave: `alfa_${hora}_izquierdo`, tabLabel: 'Izquierdo', valor: val.izq?.anterior },
-                                              ]}
-                                            />
-                                            {(['der', 'izq'] as const).filter(l => val[l]?.puntos).map(l => (
-                                              <button
-                                                key={l}
-                                                onClick={() => handleOpenEditorAlfa(hora, l)}
-                                                className="px-1 text-[10px] font-semibold text-gray-300 hover:text-amber-500 transition-colors"
-                                                title={`Corregir ${l === 'der' ? 'derecho' : 'izquierdo'}`}
-                                              >
-                                                {l === 'der' ? 'D' : 'I'}
-                                              </button>
-                                            ))}
-                                          </div>
-                                        </td>
-                                      </tr>
-                                    ))}
-                                  </tbody>
-                                </table>
-                              </div>
-                            </div>
-                          )}
-                        </>
-                      );
-                    })()}
-                  </div>
-                ) : null}
-    </div>
+  const eyeIcon = (
+    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z" />
+      <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+    </svg>
   );
+
+  // Una tarjeta por plano. Sobre el gris del fondo se recortan solas, y en el
+  // grid de dos columnas cada tabla usa la mitad del ancho en vez de estirarse.
+  const Plano = ({ color, titulo, children }: { color: string; titulo: string; children: React.ReactNode }) => (
+    <section className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden flex flex-col">
+      <header className="px-4 py-2 bg-gray-50 border-b border-gray-200 flex items-center gap-2">
+        <span className={`w-2 h-2 rounded-full ${color}`} />
+        <h3 className="text-[11px] font-bold text-gray-600 uppercase tracking-wider">{titulo}</h3>
+      </header>
+      <div className="overflow-x-auto flex-1">{children}</div>
+    </section>
+  );
+
+  const thNum = 'px-4 py-2 text-center text-xs font-medium text-gray-500';
+  const thTxt = 'px-4 py-2 text-left text-xs font-medium text-gray-500';
+  const thAcc = 'px-4 py-2 text-center text-xs font-medium text-gray-500';
+  const tdAcc = 'px-4 py-2 text-center';
+  const tdNum = 'px-4 py-2 text-center text-gray-900 font-medium';
+
+  // Contenido de los resultados de una medicion, a ancho completo.
+  const renderResultados = () => {
+    if (loadingResultados) {
+      return (
+        <div className="bg-white border border-gray-200 rounded-xl shadow-sm px-6 py-16 text-center">
+          <p className="text-gray-500">Cargando resultados...</p>
+        </div>
+      );
+    }
+    if (resultadosError) {
+      return (
+        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm">
+          {resultadosError}
+        </div>
+      );
+    }
+    if (!resultados) return null;
+
+    const OjoBtn = ({ clave, label, valores, corregir, overlay }: { clave: string; label: string; valores?: { izq?: number | string; der?: number | string }; corregir?: (tab: number) => void; overlay?: (tab: number) => { puntos: Record<string, Pt | null>; rectas: Recta[] } | null }) => {
+      if (!resultados.imagenes || !resultados.imagenes[clave]) return null;
+      return (
+        <button
+          onClick={() => handleVerImagen(resultados.imagenes[clave], label, valores, undefined, corregir, overlay)}
+          className="p-1 text-gray-300 hover:text-blue-500 transition-colors"
+          title="Ver imagen"
+        >
+          {eyeIcon}
+        </button>
+      );
+    };
+
+    const OjoBtnTabla = ({ clave, label, tabla, corregir, overlay }: { clave: string; label: string; tabla: Array<{ label: string; der?: number | string; izq?: number | string }>; corregir?: (tab: number) => void; overlay?: (tab: number) => { puntos: Record<string, Pt | null>; rectas: Recta[] } | null }) => {
+      if (!resultados.imagenes || !resultados.imagenes[clave]) return null;
+      return (
+        <button
+          onClick={() => handleVerImagen(resultados.imagenes[clave], label, undefined, tabla, corregir, overlay)}
+          className="p-1 text-gray-300 hover:text-blue-500 transition-colors"
+          title="Ver imagen"
+        >
+          {eyeIcon}
+        </button>
+      );
+    };
+
+    const OjoBtnTabs = ({ label, tabs, corregir, overlay }: { label: string; tabs: Array<{ clave: string; tabLabel: string; valor?: number | string }>; corregir?: (tab: number) => void; overlay?: (tab: number) => { puntos: Record<string, Pt | null>; rectas: Recta[] } | null }) => {
+      if (!tabs.some(t => resultados.imagenes && resultados.imagenes[t.clave])) return null;
+      return (
+        <button
+          onClick={() => handleVerImagenesTabs(label, tabs, corregir, overlay)}
+          className="p-1 text-gray-300 hover:text-blue-500 transition-colors"
+          title="Ver imágenes"
+        >
+          {eyeIcon}
+        </button>
+      );
+    };
+
+    return (
+      <div className="@container">
+      <div className="grid grid-cols-1 @5xl:grid-cols-2 gap-5">
+
+        {/* Angulos Coronales */}
+        {resultados.angulos_coronales && (
+          <Plano color="bg-blue-500" titulo="Plano Coronal">
+            <table className="w-full text-sm table-fixed">
+              <colgroup>
+                <col />
+                <col style={{ width: '19%' }} />
+                <col style={{ width: '19%' }} />
+                <col style={{ width: '13%' }} />
+                <col style={{ width: '9%' }} />
+              </colgroup>
+              <thead>
+                <tr className="border-b border-gray-200">
+                  <th className={thTxt}>Ángulo</th>
+                  <th className={thNum}>Izq</th>
+                  <th className={thNum}>Der</th>
+                  <th className={thAcc}>Imagen</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-200">
+                {resultados.angulos_coronales.centroBordeLateral && (
+                  <tr>
+                    <td className="px-4 py-2 text-gray-700">Centro-Borde Lateral</td>
+                    <td className={tdNum}>{resultados.angulos_coronales.centroBordeLateral.izq}°</td>
+                    <td className={tdNum}>{resultados.angulos_coronales.centroBordeLateral.der}°</td>
+                    <td className={tdAcc}>
+                      <OjoBtn
+                        clave="angulo_centro_borde_lateral"
+                        label="Centro-Borde Lateral"
+                        valores={{ izq: resultados.angulos_coronales.centroBordeLateral.izq, der: resultados.angulos_coronales.centroBordeLateral.der }}
+                        corregir={resultados.angulos_coronales?.puntos ? () => handleOpenEditorCoronal('lateral') : undefined}
+                        overlay={resultados.angulos_coronales?.puntos
+                          ? () => ({ puntos: resultados.angulos_coronales.puntos, rectas: RECTAS_CORONAL_LATERAL })
+                          : undefined}
+                      />
+                    </td>
+                    <td className={tdAcc}>
+                      <MenuAcciones opciones={resultados.angulos_coronales?.puntos ? [{ label: 'Corregir ángulos', onClick: () => handleOpenEditorCoronal('lateral') }] : []} />
+                    </td>
+                  </tr>
+                )}
+                {resultados.angulos_coronales.inclinacionAcetabular && (
+                  <tr>
+                    <td className="px-4 py-2 text-gray-700">Inclinación Acetabular</td>
+                    <td className={tdNum}>{resultados.angulos_coronales.inclinacionAcetabular.izq}°</td>
+                    <td className={tdNum}>{resultados.angulos_coronales.inclinacionAcetabular.der}°</td>
+                    <td className={tdAcc}>
+                      <OjoBtn
+                        clave="inclinacion_acetabular"
+                        label="Inclinación Acetabular"
+                        valores={{ izq: resultados.angulos_coronales.inclinacionAcetabular.izq, der: resultados.angulos_coronales.inclinacionAcetabular.der }}
+                        corregir={resultados.angulos_coronales?.puntos ? () => handleOpenEditorCoronal('inclinacion') : undefined}
+                        overlay={resultados.angulos_coronales?.puntos
+                          ? () => ({ puntos: resultados.angulos_coronales.puntos, rectas: RECTAS_CORONAL_INCLINACION })
+                          : undefined}
+                      />
+                    </td>
+                    <td className={tdAcc}>
+                      <MenuAcciones opciones={resultados.angulos_coronales?.puntos ? [{ label: 'Corregir ángulos', onClick: () => handleOpenEditorCoronal('inclinacion') }] : []} />
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </Plano>
+        )}
+
+        {/* Angulos Sagitales */}
+        {resultados.angulos_sagitales && (
+          <Plano color="bg-purple-500" titulo="Plano Sagital">
+            <table className="w-full text-sm table-fixed">
+              <colgroup>
+                <col />
+                <col style={{ width: '19%' }} />
+                <col style={{ width: '19%' }} />
+                <col style={{ width: '13%' }} />
+                <col style={{ width: '9%' }} />
+              </colgroup>
+              <thead>
+                <tr className="border-b border-gray-200">
+                  <th className={thTxt}>Ángulo</th>
+                  <th className={thNum}>Izq</th>
+                  <th className={thNum}>Der</th>
+                  <th className={thAcc}>Imagen</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-200">
+                {Object.entries(resultados.angulos_sagitales).filter(([k]) => k !== 'puntos').map(([key, val]: [string, any]) => (
+                  <tr key={key}>
+                    <td className="px-4 py-2 text-gray-700">
+                      {key === 'centro_borde_anterior' ? 'Centro-Borde Anterior' : key}
+                    </td>
+                    <td className={tdNum}>{val.izq}°</td>
+                    <td className={tdNum}>{val.der}°</td>
+                    <td className={tdAcc}>
+                      <div className="flex items-center justify-center gap-1">
+                        <OjoBtnTabs
+                          label="Centro-Borde Anterior"
+                          tabs={[
+                            { clave: 'angulo_centro_borde_anterior_derecho', tabLabel: 'Derecho', valor: val.der },
+                            { clave: 'angulo_centro_borde_anterior_izquierdo', tabLabel: 'Izquierdo', valor: val.izq },
+                          ]}
+                          corregir={(() => {
+                            const lados = (['der', 'izq'] as const).filter(l => resultados.angulos_sagitales?.puntos?.[l])
+                            if (!lados.length) return undefined
+                            return (tab: number) => {
+                              const visible = tab === 1 ? 'izq' : 'der'
+                              handleOpenEditorSagital(lados.includes(visible) ? visible : lados[0])
+                            }
+                          })()}
+                          overlay={(tab: number) => {
+                            const puntos = resultados.angulos_sagitales?.puntos?.[tab === 1 ? 'izq' : 'der']
+                            return puntos ? { puntos, rectas: RECTAS_SAGITAL } : null
+                          }}
+                        />
+                      </div>
+                    </td>
+                    <td className={tdAcc}>
+                      <MenuAcciones
+                        opciones={(() => {
+                          const lados = (['der', 'izq'] as const).filter(l => resultados.angulos_sagitales?.puntos?.[l])
+                          return lados.length
+                            ? [{ label: 'Corregir ángulos', onClick: () => handleOpenEditorSagital(lados[0]) }]
+                            : []
+                        })()}
+                      />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </Plano>
+        )}
+
+        {/* Angulos Axiales */}
+        {resultados.angulos_axiales && (
+          <Plano color="bg-green-500" titulo="Plano Axial">
+            <table className="w-full h-full text-sm table-fixed">
+              <colgroup>
+                <col style={{ width: '20%' }} />
+                <col />
+                <col style={{ width: '18%' }} />
+                <col style={{ width: '18%' }} />
+                <col style={{ width: '13%' }} />
+                <col style={{ width: '9%' }} />
+              </colgroup>
+              <thead>
+                <tr className="border-b border-gray-200">
+                  <th className={thTxt}>Nivel</th>
+                  <th className={thTxt}>Ángulo</th>
+                  <th className={thNum}>Izq</th>
+                  <th className={thNum}>Der</th>
+                  <th className={thAcc}>Imagen</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-200">
+                {(['proximal', 'intermedio', 'ecuatorial'] as const).filter(n => resultados.angulos_axiales[n]).flatMap((nivel) => {
+                  const nivelData: any = resultados.angulos_axiales[nivel];
+                  const angleEntries = Object.entries(nivelData).filter(([k]) => k !== 'puntos') as [string, any][];
+                  const hasPuntos = !!nivelData.puntos;
+                  return angleEntries.map(([angulo, val]: [string, any], i) => (
+                    <tr key={`${nivel}-${angulo}`}>
+                      {i === 0 && (
+                        <td className="px-4 py-2 text-gray-700 font-medium capitalize align-middle" rowSpan={angleEntries.length}>
+                          {nivel}
+                        </td>
+                      )}
+                      <td className="px-4 py-2 text-gray-700 uppercase">{angulo}</td>
+                      <td className={tdNum}>{val.izq}°</td>
+                      <td className={tdNum}>{val.der}°</td>
+                      {i === 0 && (
+                        <>
+                          <td className={`${tdAcc} align-middle`} rowSpan={angleEntries.length}>
+                            <OjoBtnTabla
+                              clave={`angulos_axiales_${nivel}_aasa_pasa`}
+                              label={`Plano Axial — ${nivel}`}
+                              tabla={angleEntries.map(([ang, v]: [string, any]) => ({
+                                label: ang.toUpperCase(),
+                                der: v.der,
+                                izq: v.izq,
+                              }))}
+                              corregir={hasPuntos ? () => handleOpenEditor(nivel, `angulos_axiales_${nivel}_aasa_pasa`) : undefined}
+                              overlay={hasPuntos ? () => ({ puntos: nivelData.puntos, rectas: RECTAS_AXIAL }) : undefined}
+                            />
+                          </td>
+                          <td className={`${tdAcc} align-middle`} rowSpan={angleEntries.length}>
+                            <MenuAcciones opciones={hasPuntos ? [{ label: 'Corregir ángulos', onClick: () => handleOpenEditor(nivel, `angulos_axiales_${nivel}_aasa_pasa`) }] : []} />
+                          </td>
+                        </>
+                      )}
+                    </tr>
+                  ));
+                })}
+              </tbody>
+            </table>
+          </Plano>
+        )}
+
+        {/* Angulo Alfa */}
+        {resultados.angulos_alfa && (
+          <Plano color="bg-orange-500" titulo="Ángulo Alfa">
+            <table className="w-full h-full text-sm table-fixed">
+              <colgroup>
+                <col />
+                <col style={{ width: '15%' }} />
+                <col style={{ width: '15%' }} />
+                <col style={{ width: '15%' }} />
+                <col style={{ width: '15%' }} />
+                <col style={{ width: '12%' }} />
+                <col style={{ width: '9%' }} />
+              </colgroup>
+              <thead>
+                <tr className="border-b border-gray-200">
+                  <th className={thTxt}>Hora</th>
+                  <th className={thNum} colSpan={2}>Izq</th>
+                  <th className={thNum} colSpan={2}>Der</th>
+                  <th className={thAcc}>Imagen</th>
+                  <th></th>
+                </tr>
+                <tr className="border-b border-gray-200">
+                  <th></th>
+                  <th className="px-4 py-1 text-center text-xs text-gray-400">Ant</th>
+                  <th className="px-4 py-1 text-center text-xs text-gray-400">Post</th>
+                  <th className="px-4 py-1 text-center text-xs text-gray-400">Ant</th>
+                  <th className="px-4 py-1 text-center text-xs text-gray-400">Post</th>
+                  <th></th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-200">
+                {Object.entries(resultados.angulos_alfa).map(([hora, val]: [string, any]) => (
+                  <tr key={hora}>
+                    <td className="px-4 py-2 text-gray-700 capitalize whitespace-nowrap">{hora.replace('_', ' ')}</td>
+                    <td className={tdNum}>{val.izq?.anterior}°</td>
+                    <td className={tdNum}>{val.izq?.posterior}°</td>
+                    <td className={tdNum}>{val.der?.anterior}°</td>
+                    <td className={tdNum}>{val.der?.posterior}°</td>
+                    <td className={tdAcc}>
+                      <div className="flex items-center justify-center gap-1">
+                        <OjoBtnTabs
+                          label={`Ángulo Alfa ${hora.replace('_', ' ')}`}
+                          tabs={[
+                            { clave: `alfa_${hora}_derecho`, tabLabel: 'Derecho', valor: val.der?.anterior },
+                            { clave: `alfa_${hora}_izquierdo`, tabLabel: 'Izquierdo', valor: val.izq?.anterior },
+                          ]}
+                          corregir={(() => {
+                            const lados = (['der', 'izq'] as const).filter(l => val[l]?.puntos)
+                            if (!lados.length) return undefined
+                            return (tab: number) => {
+                              const visible = tab === 1 ? 'izq' : 'der'
+                              handleOpenEditorAlfa(hora, lados.includes(visible) ? visible : lados[0])
+                            }
+                          })()}
+                          overlay={(tab: number) => {
+                            const puntos = val[tab === 1 ? 'izq' : 'der']?.puntos
+                            return puntos ? { puntos, rectas: RECTAS_ALFA } : null
+                          }}
+                        />
+                      </div>
+                    </td>
+                    <td className={tdAcc}>
+                      <MenuAcciones
+                        opciones={(() => {
+                          const lados = (['der', 'izq'] as const).filter(l => val[l]?.puntos)
+                          return lados.length
+                            ? [{ label: 'Corregir ángulos', onClick: () => handleOpenEditorAlfa(hora, lados[0]) }]
+                            : []
+                        })()}
+                      />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </Plano>
+        )}
+      </div>
+      </div>
+    );
+  };
 
 
   useEffect(() => {
@@ -1052,9 +1246,123 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
     <>
       {renderResultados()}
 
+      {/* Modal de imagen del angulo */}
+      {(imagenUrl || loadingImagen) && (
+        <div className="fixed inset-0 bg-black/75 flex items-center justify-center z-[70]" {...cierreImagen}>
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl mx-4 flex flex-col overflow-hidden">
+            {/* Header */}
+            <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
+              <div>
+                <p className="text-xs font-semibold text-blue-600 uppercase tracking-wider mb-0.5">Visualización</p>
+                <h3 className="text-base font-bold text-gray-900">{imagenLabel || 'Imagen del ángulo'}</h3>
+              </div>
+              <div className="flex items-center gap-2">
+                {imagenCorregir && (
+                  <button
+                    onClick={irACorregirDesdeImagen}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-amber-600 border border-amber-200 rounded-md hover:bg-amber-50 transition-colors"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125" />
+                    </svg>
+                    Corregir
+                  </button>
+                )}
+                <button
+                  onClick={handleCerrarImagen}
+                  className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+
+            {/* Tabs, Tabla, o Valores simples */}
+            {imagenTablaValores ? (
+              <div className="bg-gray-50 border-b border-gray-100 px-4 py-3">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr>
+                      <th className="text-left text-xs text-gray-400 uppercase tracking-wide pb-2 font-medium">Ángulo</th>
+                      <th className="text-center text-xs text-gray-400 uppercase tracking-wide pb-2 font-medium">Derecho</th>
+                      <th className="text-center text-xs text-gray-400 uppercase tracking-wide pb-2 font-medium">Izquierdo</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-200">
+                    {imagenTablaValores.map((row) => (
+                      <tr key={row.label}>
+                        <td className="py-1.5 text-gray-600 font-medium">{row.label}</td>
+                        <td className="py-1.5 text-center text-gray-900 font-bold">{row.der !== undefined ? `${row.der}°` : '—'}</td>
+                        <td className="py-1.5 text-center text-gray-900 font-bold">{row.izq !== undefined ? `${row.izq}°` : '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : imagenTabs && imagenTabs.length > 1 ? (
+              <div className="flex border-b border-gray-100">
+                {imagenTabs.map((tab, i) => (
+                  <button
+                    key={tab.clave}
+                    onClick={() => handleTabChange(i)}
+                    className={`flex-1 px-6 py-3 text-center transition-colors border-b-2 ${
+                      activeTab === i
+                        ? 'border-blue-500 bg-white'
+                        : 'border-transparent bg-gray-50 hover:bg-gray-100'
+                    }`}
+                  >
+                    <p className={`text-xs uppercase tracking-wide mb-1 ${activeTab === i ? 'text-blue-600 font-semibold' : 'text-gray-400'}`}>{tab.tabLabel}</p>
+                    {tab.valor !== undefined && (
+                      <p className={`text-2xl font-bold ${activeTab === i ? 'text-gray-900' : 'text-gray-400'}`}>{tab.valor}°</p>
+                    )}
+                  </button>
+                ))}
+              </div>
+            ) : imagenValores && (imagenValores.izq !== undefined || imagenValores.der !== undefined) ? (
+              <div className="flex divide-x divide-gray-100 bg-gray-50 border-b border-gray-100">
+                {imagenValores.der !== undefined && (
+                  <div className="flex-1 px-6 py-3 text-center">
+                    <p className="text-xs text-gray-400 uppercase tracking-wide mb-1">Derecho</p>
+                    <p className="text-2xl font-bold text-gray-900">{imagenValores.der}°</p>
+                  </div>
+                )}
+                {imagenValores.izq !== undefined && (
+                  <div className="flex-1 px-6 py-3 text-center">
+                    <p className="text-xs text-gray-400 uppercase tracking-wide mb-1">Izquierdo</p>
+                    <p className="text-2xl font-bold text-gray-900">{imagenValores.izq}°</p>
+                  </div>
+                )}
+              </div>
+            ) : null}
+
+            {/* Imagen */}
+            <div className="relative p-4 bg-black flex items-center justify-center min-h-48">
+              {imagenUrl && (
+                <ImagenConRectas
+                  key={imagenUrl}
+                  src={imagenUrl}
+                  alt={imagenLabel}
+                  overlay={imagenOverlay?.fn(activeTab) ?? null}
+                />
+              )}
+              {loadingImagen && (
+                <div className={`${imagenUrl ? 'absolute inset-0 bg-black/60' : ''} flex items-center justify-center`}>
+                  <svg className="animate-spin h-8 w-8 text-white" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                  </svg>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
         {/* Editor SVG de ángulos */}
         {editorOpen && (
-          <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-[90]">
+          <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-[90]" {...cierreEditor}>
             <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl mx-4 flex flex-col overflow-hidden max-h-[95vh]">
               {/* Header */}
               <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
@@ -1068,6 +1376,33 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
                   </svg>
                 </button>
               </div>
+
+              {/* Selector de lado: sagital y alfa se editan de a un lado */}
+              {ladosEditables().length > 1 && (
+                <div className="flex border-b border-gray-100">
+                  {ladosEditables().map((l) => {
+                    const activo = editorLado === l
+                    const tocado = !!editorPendientes[l] || (activo && editorPuntos !== editorOriginalPuntos)
+                    return (
+                      <button
+                        key={l}
+                        onClick={() => cambiarLadoEditor(l)}
+                        disabled={editorLoadingImage}
+                        className={`flex-1 px-6 py-2.5 text-sm text-center border-b-2 transition-colors disabled:cursor-wait ${
+                          activo
+                            ? 'border-amber-500 bg-white font-semibold text-gray-900'
+                            : 'border-transparent bg-gray-50 text-gray-500 hover:bg-gray-100'
+                        }`}
+                      >
+                        {l === 'der' ? 'Derecho' : 'Izquierdo'}
+                        {tocado && (
+                          <span className="ml-2 inline-block w-1.5 h-1.5 rounded-full bg-amber-500 align-middle" title="Con cambios sin guardar" />
+                        )}
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
 
               {/* Angle values panel */}
               <div className="px-5 py-3 bg-gray-50 border-b border-gray-100 flex gap-6 flex-wrap">
@@ -1086,32 +1421,36 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
               </div>
 
               {/* Image + SVG overlay */}
-              <div className="flex-1 bg-black flex items-center justify-center" style={{ minHeight: 400 }}>
-                {editorLoadingImage ? (
-                  <div className="flex items-center justify-center h-64">
-                    <svg className="animate-spin h-8 w-8 text-white" fill="none" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                    </svg>
-                  </div>
-                ) : editorImageUrl ? (
+              <div className="relative flex-1 min-h-0 overflow-hidden bg-black flex items-center justify-center" style={{ minHeight: 240 }}>
+                {!editorImageUrl ? (
+                  editorLoadingImage
+                    ? <Spinner />
+                    : <p className="text-gray-400 text-sm">No se pudo cargar la imagen</p>
+                ) : (
                   <div className="w-full h-full flex items-center justify-center overflow-hidden">
                     {/* inline-block wrapper shrinks to img size; SVG absolute covers it exactly */}
-                    <div style={{ display: 'inline-block', position: 'relative', maxHeight: '75vh', maxWidth: '100%', lineHeight: 0 }}>
+                    <div style={{ display: 'inline-block', position: 'relative', maxHeight: ALTO_MAX_IMAGEN, maxWidth: '100%', lineHeight: 0 }}>
                       <img
                         src={editorImageUrl}
                         alt={editorLabel}
-                        style={{ display: 'block', maxHeight: '75vh', maxWidth: '100%' }}
+                        style={{ display: 'block', maxHeight: ALTO_MAX_IMAGEN, maxWidth: '100%' }}
                         draggable={false}
-                        onLoad={(e) => setEditorImgDims({
-                          w: e.currentTarget.naturalWidth,
-                          h: e.currentTarget.naturalHeight,
-                        })}
+                        onLoad={(e) => {
+                          setEditorImgDims({
+                            w: e.currentTarget.naturalWidth,
+                            h: e.currentTarget.naturalHeight,
+                          })
+                          setEditorImagenLista(true)
+                        }}
                       />
                       {/* SVG overlay — position absolute garantiza que cubre exactamente la imagen */}
                       <svg
                         ref={svgRef}
-                        style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', cursor: editorDragging ? 'grabbing' : 'default' }}
+                        style={{
+                          position: 'absolute', top: 0, left: 0, width: '100%', height: '100%',
+                          cursor: editorDragging ? 'grabbing' : 'default',
+                          visibility: editorImagenLista ? 'visible' : 'hidden',
+                        }}
                         viewBox="0 0 100 100"
                         preserveAspectRatio="none"
                         onMouseMove={handleEditorSvgMouseMove}
@@ -1173,8 +1512,15 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
                       </svg>
                     </div>
                   </div>
-                ) : (
-                  <p className="text-gray-400 text-sm">No se pudo cargar la imagen</p>
+                )}
+
+                {/* Velo de carga sobre la imagen anterior. Descartarla hacia
+                    colapsar el area al alto del spinner y estirarla de nuevo al
+                    llegar la nueva: el modal daba un salto en cada cambio de lado. */}
+                {editorImageUrl && (editorLoadingImage || !editorImagenLista) && (
+                  <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
+                    <Spinner />
+                  </div>
                 )}
               </div>
 
@@ -1194,7 +1540,14 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
                 </div>
                 <div className="flex gap-2">
                   <button
-                    onClick={() => { setEditorPuntos(editorOriginalPuntos); setEditorAngulos(editorOriginalAngulos); }}
+                    onClick={() => {
+                      setEditorPuntos(editorOriginalPuntos)
+                      setEditorAngulos(editorOriginalAngulos)
+                      setEditorPendientes(prev => {
+                        const { [editorLado]: _, ...resto } = prev
+                        return resto
+                      })
+                    }}
                     className="px-4 py-2 text-sm border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
                   >
                     Restablecer

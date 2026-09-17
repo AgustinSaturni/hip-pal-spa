@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { useCierreDeFondo } from './useCierreDeFondo';
 
 interface Instancia {
   id: string;
@@ -28,6 +29,7 @@ export default function VisorDicom({
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [primerCorteListo, setPrimerCorteListo] = useState(false);
+  const cierreVisor = useCierreDeFondo(onClose);
   const contenedorRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -79,11 +81,8 @@ export default function VisorDicom({
   const actual = instancias[idx];
 
   return (
-    <div className="fixed inset-0 bg-black/85 flex items-center justify-center z-[85]" onClick={onClose}>
-      <div
-        className="bg-white rounded-xl shadow-2xl w-full max-w-6xl mx-4 flex flex-col overflow-hidden max-h-[95vh]"
-        onClick={(e) => e.stopPropagation()}
-      >
+    <div className="fixed inset-0 bg-black/85 flex items-center justify-center z-[85]" {...cierreVisor}>
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-6xl mx-4 flex flex-col overflow-hidden max-h-[95vh]">
         <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between">
           <div className="min-w-0">
             <p className="text-[11px] font-semibold text-blue-600 uppercase tracking-wider">Visor</p>
