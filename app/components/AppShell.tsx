@@ -565,6 +565,9 @@ export default function AppShell() {
                               Modalidad
                             </th>
                             <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                              Origen
+                            </th>
+                            <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
                               Instancias
                             </th>
                             <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -586,6 +589,24 @@ export default function AppShell() {
                                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 text-center">
                                   {seriesItem.modality}
                                 </td>
+                                <td className="px-6 py-4 whitespace-nowrap text-sm text-center">
+                                  {seriesItem.origen ? (
+                                    <span
+                                      className={`inline-flex px-2 py-1 text-xs font-medium rounded-full ${
+                                        seriesItem.origen === 'Original'
+                                          ? 'bg-green-100 text-green-700'
+                                          : 'bg-amber-100 text-amber-700'
+                                      }`}
+                                      title={seriesItem.origen === 'Original'
+                                        ? 'Adquisición original del tomógrafo'
+                                        : 'Reconstrucción de la estación: puede traer cortes vacíos'}
+                                    >
+                                      {seriesItem.origen}
+                                    </span>
+                                  ) : (
+                                    <span className="text-gray-300">-</span>
+                                  )}
+                                </td>
                                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 text-center">
                                   {seriesItem.num_instances}
                                 </td>
@@ -605,7 +626,7 @@ export default function AppShell() {
                             ))
                           ) : (
                             <tr>
-                              <td colSpan={4} className="px-6 py-4 text-center text-sm text-gray-500">
+                              <td colSpan={5} className="px-6 py-4 text-center text-sm text-gray-500">
                                 No se encontraron series para este paciente
                               </td>
                             </tr>
