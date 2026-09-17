@@ -136,13 +136,17 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
   const [savingEditor, setSavingEditor] = useState(false)
   const [editorSaveError, setEditorSaveError] = useState<string | null>(null)
   const svgRef = useRef<SVGSVGElement>(null)
+  // Que editor abre lo que el modal de imagen esta mostrando. Recibe el tab
+  // activo para que sagital y alfa entren por el lado que se esta viendo.
+  const [imagenCorregir, setImagenCorregir] = useState<{ fn: (tab: number) => void } | null>(null)
 
-  const handleVerImagen = async (clave: string, label: string, valores?: { izq?: number | string; der?: number | string }, tablaValores?: Array<{ label: string; der?: number | string; izq?: number | string }>) => {
+  const handleVerImagen = async (clave: string, label: string, valores?: { izq?: number | string; der?: number | string }, tablaValores?: Array<{ label: string; der?: number | string; izq?: number | string }>, corregir?: (tab: number) => void) => {
     setLoadingImagen(true);
     setImagenUrl(null);
     setImagenLabel(label);
     setImagenValores(valores ?? null);
     setImagenTablaValores(tablaValores ?? null);
+    setImagenCorregir(corregir ? { fn: corregir } : null);
     try {
       const response = await fetch(`/mediciones/${estudioId}/imagen?clave=${encodeURIComponent(clave)}`);
       if (!response.ok) throw new Error('No se pudo obtener la imagen');
@@ -155,9 +159,10 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
     }
   };
 
-  const handleVerImagenesTabs = async (label: string, tabs: Array<{ clave: string; tabLabel: string; valor?: number | string }>) => {
+  const handleVerImagenesTabs = async (label: string, tabs: Array<{ clave: string; tabLabel: string; valor?: number | string }>, corregir?: (tab: number) => void) => {
     setImagenLabel(label);
     setImagenTabs(tabs);
+    setImagenCorregir(corregir ? { fn: corregir } : null);
     setImagenValores(null);
     setActiveTab(0);
     setLoadingImagen(true);
@@ -209,6 +214,15 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
     setImagenTablaValores(null);
     setImagenTabs(null);
     setActiveTab(0);
+    setImagenCorregir(null);
+  };
+
+  // Salto directo de ver a corregir, sin pasar por el menu de la tabla.
+  const irACorregirDesdeImagen = () => {
+    const corregir = imagenCorregir;
+    const tab = activeTab;
+    handleCerrarImagen();
+    corregir?.fn(tab);
   };
 
   const cierreImagen = useCierreDeFondo(handleCerrarImagen);
@@ -784,11 +798,11 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
     }
     if (!resultados) return null;
 
-    const OjoBtn = ({ clave, label, valores }: { clave: string; label: string; valores?: { izq?: number | string; der?: number | string } }) => {
+    const OjoBtn = ({ clave, label, valores, corregir }: { clave: string; label: string; valores?: { izq?: number | string; der?: number | string }; corregir?: (tab: number) => void }) => {
       if (!resultados.imagenes || !resultados.imagenes[clave]) return null;
       return (
         <button
-          onClick={() => handleVerImagen(resultados.imagenes[clave], label, valores)}
+          onClick={() => handleVerImagen(resultados.imagenes[clave], label, valores, undefined, corregir)}
           className="p-1 text-gray-300 hover:text-blue-500 transition-colors"
           title="Ver imagen"
         >
@@ -797,11 +811,11 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
       );
     };
 
-    const OjoBtnTabla = ({ clave, label, tabla }: { clave: string; label: string; tabla: Array<{ label: string; der?: number | string; izq?: number | string }> }) => {
+    const OjoBtnTabla = ({ clave, label, tabla, corregir }: { clave: string; label: string; tabla: Array<{ label: string; der?: number | string; izq?: number | string }>; corregir?: (tab: number) => void }) => {
       if (!resultados.imagenes || !resultados.imagenes[clave]) return null;
       return (
         <button
-          onClick={() => handleVerImagen(resultados.imagenes[clave], label, undefined, tabla)}
+          onClick={() => handleVerImagen(resultados.imagenes[clave], label, undefined, tabla, corregir)}
           className="p-1 text-gray-300 hover:text-blue-500 transition-colors"
           title="Ver imagen"
         >
@@ -810,11 +824,11 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
       );
     };
 
-    const OjoBtnTabs = ({ label, tabs }: { label: string; tabs: Array<{ clave: string; tabLabel: string; valor?: number | string }> }) => {
+    const OjoBtnTabs = ({ label, tabs, corregir }: { label: string; tabs: Array<{ clave: string; tabLabel: string; valor?: number | string }>; corregir?: (tab: number) => void }) => {
       if (!tabs.some(t => resultados.imagenes && resultados.imagenes[t.clave])) return null;
       return (
         <button
-          onClick={() => handleVerImagenesTabs(label, tabs)}
+          onClick={() => handleVerImagenesTabs(label, tabs, corregir)}
           className="p-1 text-gray-300 hover:text-blue-500 transition-colors"
           title="Ver imágenes"
         >
@@ -854,7 +868,12 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
                     <td className={tdNum}>{resultados.angulos_coronales.centroBordeLateral.izq}°</td>
                     <td className={tdNum}>{resultados.angulos_coronales.centroBordeLateral.der}°</td>
                     <td className={tdAcc}>
-                      <OjoBtn clave="angulo_centro_borde_lateral" label="Centro-Borde Lateral" valores={{ izq: resultados.angulos_coronales.centroBordeLateral.izq, der: resultados.angulos_coronales.centroBordeLateral.der }} />
+                      <OjoBtn
+                        clave="angulo_centro_borde_lateral"
+                        label="Centro-Borde Lateral"
+                        valores={{ izq: resultados.angulos_coronales.centroBordeLateral.izq, der: resultados.angulos_coronales.centroBordeLateral.der }}
+                        corregir={resultados.angulos_coronales?.puntos ? () => handleOpenEditorCoronal('lateral') : undefined}
+                      />
                     </td>
                     <td className={tdAcc}>
                       <MenuAcciones opciones={resultados.angulos_coronales?.puntos ? [{ label: 'Corregir ángulos', onClick: () => handleOpenEditorCoronal('lateral') }] : []} />
@@ -867,7 +886,12 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
                     <td className={tdNum}>{resultados.angulos_coronales.inclinacionAcetabular.izq}°</td>
                     <td className={tdNum}>{resultados.angulos_coronales.inclinacionAcetabular.der}°</td>
                     <td className={tdAcc}>
-                      <OjoBtn clave="inclinacion_acetabular" label="Inclinación Acetabular" valores={{ izq: resultados.angulos_coronales.inclinacionAcetabular.izq, der: resultados.angulos_coronales.inclinacionAcetabular.der }} />
+                      <OjoBtn
+                        clave="inclinacion_acetabular"
+                        label="Inclinación Acetabular"
+                        valores={{ izq: resultados.angulos_coronales.inclinacionAcetabular.izq, der: resultados.angulos_coronales.inclinacionAcetabular.der }}
+                        corregir={resultados.angulos_coronales?.puntos ? () => handleOpenEditorCoronal('inclinacion') : undefined}
+                      />
                     </td>
                     <td className={tdAcc}>
                       <MenuAcciones opciones={resultados.angulos_coronales?.puntos ? [{ label: 'Corregir ángulos', onClick: () => handleOpenEditorCoronal('inclinacion') }] : []} />
@@ -915,6 +939,14 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
                             { clave: 'angulo_centro_borde_anterior_derecho', tabLabel: 'Derecho', valor: val.der },
                             { clave: 'angulo_centro_borde_anterior_izquierdo', tabLabel: 'Izquierdo', valor: val.izq },
                           ]}
+                          corregir={(() => {
+                            const lados = (['der', 'izq'] as const).filter(l => resultados.angulos_sagitales?.puntos?.[l])
+                            if (!lados.length) return undefined
+                            return (tab: number) => {
+                              const visible = tab === 1 ? 'izq' : 'der'
+                              handleOpenEditorSagital(lados.includes(visible) ? visible : lados[0])
+                            }
+                          })()}
                         />
                       </div>
                     </td>
@@ -983,6 +1015,7 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
                                 der: v.der,
                                 izq: v.izq,
                               }))}
+                              corregir={hasPuntos ? () => handleOpenEditor(nivel, `angulos_axiales_${nivel}_aasa_pasa`) : undefined}
                             />
                           </td>
                           <td className={`${tdAcc} align-middle`} rowSpan={angleEntries.length}>
@@ -1045,6 +1078,14 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
                             { clave: `alfa_${hora}_derecho`, tabLabel: 'Derecho', valor: val.der?.anterior },
                             { clave: `alfa_${hora}_izquierdo`, tabLabel: 'Izquierdo', valor: val.izq?.anterior },
                           ]}
+                          corregir={(() => {
+                            const lados = (['der', 'izq'] as const).filter(l => val[l]?.puntos)
+                            if (!lados.length) return undefined
+                            return (tab: number) => {
+                              const visible = tab === 1 ? 'izq' : 'der'
+                              handleOpenEditorAlfa(hora, lados.includes(visible) ? visible : lados[0])
+                            }
+                          })()}
                         />
                       </div>
                     </td>
@@ -1109,14 +1150,27 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
                 <p className="text-xs font-semibold text-blue-600 uppercase tracking-wider mb-0.5">Visualización</p>
                 <h3 className="text-base font-bold text-gray-900">{imagenLabel || 'Imagen del ángulo'}</h3>
               </div>
-              <button
-                onClick={handleCerrarImagen}
-                className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
-              >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
+              <div className="flex items-center gap-2">
+                {imagenCorregir && (
+                  <button
+                    onClick={irACorregirDesdeImagen}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-amber-600 border border-amber-200 rounded-md hover:bg-amber-50 transition-colors"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125" />
+                    </svg>
+                    Corregir
+                  </button>
+                )}
+                <button
+                  onClick={handleCerrarImagen}
+                  className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
             </div>
 
             {/* Tabs, Tabla, o Valores simples */}
