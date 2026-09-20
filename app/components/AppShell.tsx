@@ -101,6 +101,7 @@ export default function AppShell() {
   const [visorSerie, setVisorSerie] = useState<Series | null>(null);
   const [showMedicionesModal, setShowMedicionesModal] = useState(false);
   const [medicionesPatient, setMedicionesPatient] = useState<Patient | null>(null);
+  const { registrar, aAbrir, abierto } = useAnalisisEnCurso();
   const [estudios, setEstudios] = useState<any[]>([]);
   const [loadingEstudios, setLoadingEstudios] = useState(false);
   const [estudiosError, setEstudiosError] = useState<string | null>(null);
@@ -244,6 +245,42 @@ export default function AppShell() {
     setConfirmDeleteId(null);
   };
 
+  // Atiende el pedido de abrir un reporte que deja el Topbar al clickear una
+  // notificacion. El reporte necesita al paciente y a sus estudios, que vienen
+  // de la busqueda: llegando por aca hay que reconstruirlos.
+  useEffect(() => {
+    if (!aAbrir) return;
+    let cancelado = false;
+
+    (async () => {
+      setShowSeriesModal(false);
+      setShowMedicionesModal(false);
+      setConfirmDeleteId(null);
+      // El paciente sale de la notificacion: num_studies y study_ids solo los
+      // usa la tabla de busqueda, que no esta en juego en esta vista.
+      setMedicionesPatient({
+        patient_id: aAbrir.patientId,
+        patient_name: aAbrir.patientName,
+        num_studies: 0,
+        study_ids: [],
+      });
+      setEstudios([]);
+      setEstudiosError(null);
+      try {
+        const frescos = await traerEstudios(aAbrir.patientId);
+        if (!cancelado) setEstudios(frescos);
+      } catch (err) {
+        if (!cancelado) setEstudiosError(err instanceof Error ? err.message : 'Error desconocido');
+      }
+      if (!cancelado) {
+        setResultadosEstudioId(aAbrir.estudioId);
+        abierto();
+      }
+    })();
+
+    return () => { cancelado = true; };
+  }, [aAbrir, abierto]);
+
   const handleDeleteEstudio = async (estudioId: number) => {
     setDeletingEstudioId(estudioId);
     setConfirmDeleteId(null);
@@ -335,7 +372,6 @@ export default function AppShell() {
 
   // El breadcrumb del Topbar no puede deducir esta vista del pathname: la
   // navegacion a los resultados es estado local, no una ruta.
-  const { registrar } = useAnalisisEnCurso();
   const { setDetalle } = useBreadcrumb();
   useEffect(() => {
     setDetalle(resultadosEstudioId ? 'Resultados de Medición' : null);

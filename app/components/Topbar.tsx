@@ -13,7 +13,7 @@ const titulos: Record<string, string> = {
 export default function Topbar() {
   const pathname = usePathname();
   const { detalle } = useBreadcrumb();
-  const { pendientes, terminados, descartar, descartarTodos } = useAnalisisEnCurso();
+  const { pendientes, terminados, descartar, descartarTodos, pedirAbrir } = useAnalisisEnCurso();
   const [abierto, setAbierto] = useState(false);
   const cierrePanel = useCierreDeFondo(() => setAbierto(false));
   return (
@@ -78,19 +78,29 @@ export default function Topbar() {
                 </div>
 
                 <ul className="max-h-80 overflow-y-auto divide-y divide-gray-100">
-                  {terminados.map((t) => (
-                    <li key={t.estudioId} className="px-4 py-3 flex items-start gap-3">
+                  {terminados.map((t) => {
+                    const abrible = t.estado !== 'Error';
+                    return (
+                    <li
+                      key={t.estudioId}
+                      className={`px-4 py-3 flex items-start gap-3 ${abrible ? 'hover:bg-blue-50 transition-colors' : ''}`}
+                    >
                       <span
                         className={`mt-1 w-2 h-2 rounded-full shrink-0 ${
                           t.estado === 'Error' ? 'bg-red-500' : 'bg-green-500'
                         }`}
                       />
-                      <div className="min-w-0 flex-1">
+                      <button
+                        onClick={() => { if (abrible) { setAbierto(false); pedirAbrir(t); } }}
+                        disabled={!abrible}
+                        title={abrible ? 'Ver resultados' : undefined}
+                        className={`min-w-0 flex-1 text-left ${abrible ? '' : 'cursor-default'}`}
+                      >
                         <p className="text-sm font-medium text-gray-900 truncate">{t.patientName}</p>
                         <p className="text-xs text-gray-500 truncate">
-                          {t.descripcion} · {t.estado === 'Error' ? 'Falló el análisis' : 'Listo'}
+                          {t.descripcion} · {t.estado === 'Error' ? 'Falló el análisis' : 'Ver resultados'}
                         </p>
-                      </div>
+                      </button>
                       <button
                         onClick={() => descartar(t.estudioId)}
                         title="Descartar"
@@ -101,7 +111,8 @@ export default function Topbar() {
                         </svg>
                       </button>
                     </li>
-                  ))}
+                    );
+                  })}
 
                   {pendientes.map((p) => (
                     <li key={p.estudioId} className="px-4 py-3 flex items-start gap-3">

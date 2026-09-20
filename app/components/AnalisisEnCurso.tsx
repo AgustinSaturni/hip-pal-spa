@@ -36,6 +36,17 @@ type Contexto = {
   registrar: (a: AnalisisPendiente) => void;
   descartar: (estudioId: number) => void;
   descartarTodos: () => void;
+  /**
+   * Pedido de abrir un reporte, dejado por el Topbar y atendido por AppShell.
+   *
+   * El Topbar vive en el layout y el reporte es estado de AppShell, asi que no
+   * puede abrirlo directo. Va por aca en vez de por la URL para no reintroducir
+   * la ruta que sacamos: volver de un reporte abierto asi tiene que dejar al
+   * usuario donde estaba, no remontar la pantalla.
+   */
+  aAbrir: AnalisisTerminado | null;
+  pedirAbrir: (a: AnalisisTerminado) => void;
+  abierto: () => void;
 };
 
 const Ctx = createContext<Contexto>({
@@ -44,6 +55,9 @@ const Ctx = createContext<Contexto>({
   registrar: () => {},
   descartar: () => {},
   descartarTodos: () => {},
+  aAbrir: null,
+  pedirAbrir: () => {},
+  abierto: () => {},
 });
 
 const INTERVALO_MS = 5000;
@@ -52,6 +66,7 @@ const TERMINALES = ['Finalizado', 'Error'];
 export function AnalisisEnCursoProvider({ children }: { children: ReactNode }) {
   const [pendientes, setPendientes] = useState<AnalisisPendiente[]>([]);
   const [terminados, setTerminados] = useState<AnalisisTerminado[]>([]);
+  const [aAbrir, setAAbrir] = useState<AnalisisTerminado | null>(null);
 
   const registrar = useCallback((a: AnalisisPendiente) => {
     setPendientes(prev => (prev.some(p => p.estudioId === a.estudioId) ? prev : [...prev, a]));
@@ -62,6 +77,14 @@ export function AnalisisEnCursoProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const descartarTodos = useCallback(() => setTerminados([]), []);
+
+  // Abrirlo lo saca de la lista: ya lo viste, la notificacion cumplio.
+  const pedirAbrir = useCallback((a: AnalisisTerminado) => {
+    setTerminados(prev => prev.filter(t => t.estudioId !== a.estudioId));
+    setAAbrir(a);
+  }, []);
+
+  const abierto = useCallback(() => setAAbrir(null), []);
 
   useEffect(() => {
     if (!pendientes.length) return;
@@ -117,7 +140,9 @@ export function AnalisisEnCursoProvider({ children }: { children: ReactNode }) {
   }, [pendientes]);
 
   return (
-    <Ctx.Provider value={{ pendientes, terminados, registrar, descartar, descartarTodos }}>
+    <Ctx.Provider
+      value={{ pendientes, terminados, registrar, descartar, descartarTodos, aAbrir, pedirAbrir, abierto }}
+    >
       {children}
     </Ctx.Provider>
   );
