@@ -44,6 +44,10 @@ const angleGroups = [
 
 const allAngleIds = angleGroups.flatMap((g) => g.angles.map((a) => a.id));
 
+// Un analisis tarda minutos, asi que 5s alcanza para que se sienta vivo sin
+// castigar al backend.
+const INTERVALO_REFRESCO_MS = 5000;
+
 export default function AppShell() {
   const [searchName, setSearchName] = useState('');
   const [patients, setPatients] = useState<Patient[]>([]);
@@ -164,6 +168,12 @@ export default function AppShell() {
     setAnalysisError(null);
   };
 
+  const traerEstudios = async (patientId: string) => {
+    const response = await fetch(`/estudios/${patientId}`);
+    if (!response.ok) throw new Error('Error al cargar estudios');
+    return (await response.json()).estudios as any[];
+  };
+
   const handleMedicionesClick = async (patient: Patient) => {
     setMedicionesPatient(patient);
     setShowMedicionesModal(true);
@@ -172,16 +182,60 @@ export default function AppShell() {
     setEstudios([]);
 
     try {
-      const response = await fetch(`/estudios/${patient.patient_id}`);
-      if (!response.ok) throw new Error('Error al cargar estudios');
-      const data = await response.json();
-      setEstudios(data.estudios);
+      setEstudios(await traerEstudios(patient.patient_id));
     } catch (err) {
       setEstudiosError(err instanceof Error ? err.message : 'Error desconocido');
     } finally {
       setLoadingEstudios(false);
     }
   };
+
+  // Un estudio deja de moverse cuando termina, con o sin exito. Sin contar
+  // 'Error' como terminal, el polling quedaria girando para siempre sobre algo
+  // que ya no va a cambiar.
+  const enCurso = (estado: string) => estado !== 'Finalizado' && estado !== 'Error';
+
+  const hayEnCurso = estudios.some(e => enCurso(e.estado));
+
+  // Refresca el listado mientras haya algo procesandose. Antes se cargaba una
+  // sola vez al abrir el modal y quedaba congelado: un estudio que terminaba
+  // seguia figurando 'Procesando' hasta cerrar y volver a abrir.
+  //
+  // Las tres condiciones importan: sin la de estudios en curso quedaria
+  // consultando para siempre un listado que ya no cambia, y sin la de
+  // visibilidad seguiria pegandole al backend con la pestaña en segundo plano.
+  useEffect(() => {
+    const patientId = medicionesPatient?.patient_id;
+    if (!showMedicionesModal || !patientId) return;
+    if (!hayEnCurso) return;
+
+    let cancelado = false;
+
+    const refrescar = async () => {
+      if (document.visibilityState !== 'visible') return;
+      try {
+        const frescos = await traerEstudios(patientId);
+        // El usuario pudo cerrar el modal o borrar un estudio mientras la
+        // request estaba en vuelo; sin esto la respuesta vieja lo resucita.
+        if (!cancelado) setEstudios(frescos);
+      } catch {
+        // Un tick fallido no molesta al usuario: el proximo reintenta.
+      }
+    };
+
+    const id = setInterval(refrescar, INTERVALO_REFRESCO_MS);
+    // Volver a la pestaña no deberia esperar al proximo tick.
+    document.addEventListener('visibilitychange', refrescar);
+
+    return () => {
+      cancelado = true;
+      clearInterval(id);
+      document.removeEventListener('visibilitychange', refrescar);
+    };
+    // Depende de si hay algo en curso y no del array: 'estudios' cambia de
+    // identidad en cada refresco y el intervalo se estaria recreando en cada
+    // tick.
+  }, [showMedicionesModal, medicionesPatient?.patient_id, hayEnCurso]);
 
   const handleCloseMedicionesModal = () => {
     setShowMedicionesModal(false);
