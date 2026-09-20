@@ -23,6 +23,9 @@ export interface Series {
   description: string;
   modality: string;
   num_instances: number;
+  /** 'Original' si es la adquisicion, 'Derivada' si es una reconstruccion de
+   *  la estacion. null cuando la serie no declara ImageType. */
+  origen: 'Original' | 'Derivada' | null;
 }
 
 export interface SeriesResponse {
