@@ -6,6 +6,7 @@ import VisorDicom from './VisorDicom';
 import ResultadosMedicion from './ResultadosMedicion';
 import { useCierreDeFondo } from './useCierreDeFondo';
 import { useBreadcrumb } from './Breadcrumb';
+import { useAnalisisEnCurso } from './AnalisisEnCurso';
 
 const angleGroups = [
   {
@@ -311,6 +312,19 @@ export default function AppShell() {
         throw new Error('Error al procesar la serie');
       }
 
+      // El POST ya devuelve el id del estudio recien creado; hasta ahora se
+      // descartaba. Con el se puede seguir su estado aunque el usuario cierre
+      // el modal y se vaya a otra pantalla.
+      const creado = (await response.json())?.data?.estudio_id;
+      if (creado) {
+        registrar({
+          estudioId: creado,
+          patientId: selectedPatient.patient_id,
+          patientName: formatPatientName(selectedPatient.patient_name),
+          descripcion: selectedSeries.description,
+        });
+      }
+
       setAnalysisSuccess(true);
     } catch (err) {
       setAnalysisError(err instanceof Error ? err.message : 'Error desconocido');
@@ -321,6 +335,7 @@ export default function AppShell() {
 
   // El breadcrumb del Topbar no puede deducir esta vista del pathname: la
   // navegacion a los resultados es estado local, no una ruta.
+  const { registrar } = useAnalisisEnCurso();
   const { setDetalle } = useBreadcrumb();
   useEffect(() => {
     setDetalle(resultadosEstudioId ? 'Resultados de Medición' : null);

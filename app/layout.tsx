@@ -4,6 +4,7 @@ import "./globals.css";
 import Sidebar from "./components/Sidebar";
 import Topbar from "./components/Topbar";
 import { BreadcrumbProvider } from "./components/Breadcrumb";
+import { AnalisisEnCursoProvider } from "./components/AnalisisEnCurso";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -30,6 +31,7 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
+        <AnalisisEnCursoProvider>
         <BreadcrumbProvider>
           <div className="min-h-screen flex">
             <Sidebar />
@@ -41,6 +43,7 @@ export default function RootLayout({
             </div>
           </div>
         </BreadcrumbProvider>
+        </AnalisisEnCursoProvider>
       </body>
     </html>
   );
