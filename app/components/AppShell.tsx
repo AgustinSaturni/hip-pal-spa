@@ -6,6 +6,7 @@ import VisorDicom from './VisorDicom';
 import ResultadosMedicion from './ResultadosMedicion';
 import { useCierreDeFondo } from './useCierreDeFondo';
 import { useBreadcrumb } from './Breadcrumb';
+import { useAnalisisEnCurso } from './AnalisisEnCurso';
 
 const angleGroups = [
   {
@@ -100,6 +101,7 @@ export default function AppShell() {
   const [visorSerie, setVisorSerie] = useState<Series | null>(null);
   const [showMedicionesModal, setShowMedicionesModal] = useState(false);
   const [medicionesPatient, setMedicionesPatient] = useState<Patient | null>(null);
+  const { registrar, aAbrir, abierto } = useAnalisisEnCurso();
   const [estudios, setEstudios] = useState<any[]>([]);
   const [loadingEstudios, setLoadingEstudios] = useState(false);
   const [estudiosError, setEstudiosError] = useState<string | null>(null);
@@ -243,6 +245,42 @@ export default function AppShell() {
     setConfirmDeleteId(null);
   };
 
+  // Atiende el pedido de abrir un reporte que deja el Topbar al clickear una
+  // notificacion. El reporte necesita al paciente y a sus estudios, que vienen
+  // de la busqueda: llegando por aca hay que reconstruirlos.
+  useEffect(() => {
+    if (!aAbrir) return;
+    let cancelado = false;
+
+    (async () => {
+      setShowSeriesModal(false);
+      setShowMedicionesModal(false);
+      setConfirmDeleteId(null);
+      // El paciente sale de la notificacion: num_studies y study_ids solo los
+      // usa la tabla de busqueda, que no esta en juego en esta vista.
+      setMedicionesPatient({
+        patient_id: aAbrir.patientId,
+        patient_name: aAbrir.patientName,
+        num_studies: 0,
+        study_ids: [],
+      });
+      setEstudios([]);
+      setEstudiosError(null);
+      try {
+        const frescos = await traerEstudios(aAbrir.patientId);
+        if (!cancelado) setEstudios(frescos);
+      } catch (err) {
+        if (!cancelado) setEstudiosError(err instanceof Error ? err.message : 'Error desconocido');
+      }
+      if (!cancelado) {
+        setResultadosEstudioId(aAbrir.estudioId);
+        abierto();
+      }
+    })();
+
+    return () => { cancelado = true; };
+  }, [aAbrir, abierto]);
+
   const handleDeleteEstudio = async (estudioId: number) => {
     setDeletingEstudioId(estudioId);
     setConfirmDeleteId(null);
@@ -309,6 +347,19 @@ export default function AppShell() {
 
       if (!response.ok) {
         throw new Error('Error al procesar la serie');
+      }
+
+      // El POST ya devuelve el id del estudio recien creado; hasta ahora se
+      // descartaba. Con el se puede seguir su estado aunque el usuario cierre
+      // el modal y se vaya a otra pantalla.
+      const creado = (await response.json())?.data?.estudio_id;
+      if (creado) {
+        registrar({
+          estudioId: creado,
+          patientId: selectedPatient.patient_id,
+          patientName: formatPatientName(selectedPatient.patient_name),
+          descripcion: selectedSeries.description,
+        });
       }
 
       setAnalysisSuccess(true);
