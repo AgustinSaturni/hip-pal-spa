@@ -107,20 +107,43 @@ function ImagenConRectas({
   alt: string
   overlay: { puntos: Record<string, { x: number; y: number } | null>; rectas: Recta[] } | null
 }) {
-  const [cargada, setCargada] = useState(false)
+  const [estado, setEstado] = useState<'cargando' | 'lista' | 'error'>('cargando')
   return (
-    <div style={{ position: 'relative', display: 'inline-block', lineHeight: 0 }}>
-      <img
-        src={src}
-        alt={alt}
-        className="max-h-[55vh] object-contain"
-        style={{ display: 'block' }}
-        onLoad={() => setCargada(true)}
-      />
-      {cargada && overlay && <OverlayRectas puntos={overlay.puntos} rectas={overlay.rectas} />}
-    </div>
+    <>
+      <div style={{ position: 'relative', display: 'inline-block', lineHeight: 0 }}>
+        <img
+          src={src}
+          alt={alt}
+          className="max-h-[55vh] object-contain"
+          style={{ display: 'block' }}
+          onLoad={() => setEstado('lista')}
+          onError={() => setEstado('error')}
+        />
+        {estado === 'lista' && overlay && <OverlayRectas puntos={overlay.puntos} rectas={overlay.rectas} />}
+      </div>
+      {/* El contenedor de afuera es relative, asi que estos cubren la imagen. */}
+      {estado === 'cargando' && (
+        <div className="absolute inset-0 bg-black/60 flex items-center justify-center"><Spinner /></div>
+      )}
+      {estado === 'error' && (
+        <div className="absolute inset-0 flex items-center justify-center">
+          <p className="text-gray-400 text-sm">No se pudo cargar la imagen</p>
+        </div>
+      )}
+    </>
   )
 }
+
+/**
+ * Ruta de la imagen de un angulo. gestor-service la lee de MinIO y reenvia los
+ * bytes, asi que esto va directo en el src del <img>: antes habia que pedir
+ * primero una URL al backend y esperar el JSON para recien empezar a bajar la
+ * imagen. MinIO ya no necesita ser alcanzable desde el navegador.
+ */
+const urlImagen = (estudioId: number | null, clave: string) =>
+  estudioId === null
+    ? null
+    : `/mediciones/${estudioId}/imagen?clave=${encodeURIComponent(clave)}`
 
 // El modal llega a 95vh; el resto de sus filas (cabecera, tabs, panel de
 // angulos, leyenda y footer) suman ~340px que la imagen no puede ocupar.
@@ -199,7 +222,10 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
 
 
   const [imagenUrl, setImagenUrl] = useState<string | null>(null);
-  const [loadingImagen, setLoadingImagen] = useState(false);
+  // Si la imagen esta cargando lo sabe ImagenConRectas, que se remonta con
+  // key={src}: un flag en el padre se desincronizaba cuando la url nueva era
+  // igual a la anterior (React descarta el cambio y no hay onLoad que lo baje).
+  const [imagenAbierta, setImagenAbierta] = useState(false);
   const [imagenLabel, setImagenLabel] = useState<string>('');
   const [imagenValores, setImagenValores] = useState<{ izq?: number | string; der?: number | string } | null>(null);
   const [imagenTablaValores, setImagenTablaValores] = useState<Array<{ label: string; der?: number | string; izq?: number | string }> | null>(null);
@@ -244,23 +270,13 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
   const [imagenOverlay, setImagenOverlay] = useState<{ fn: (tab: number) => { puntos: Record<string, Pt | null>; rectas: Recta[] } | null } | null>(null)
 
   const handleVerImagen = async (clave: string, label: string, valores?: { izq?: number | string; der?: number | string }, tablaValores?: Array<{ label: string; der?: number | string; izq?: number | string }>, corregir?: (tab: number) => void, overlay?: (tab: number) => { puntos: Record<string, Pt | null>; rectas: Recta[] } | null) => {
-    setLoadingImagen(true);
-    setImagenUrl(null);
+    setImagenAbierta(true);
     setImagenLabel(label);
     setImagenValores(valores ?? null);
     setImagenTablaValores(tablaValores ?? null);
     setImagenCorregir(corregir ? { fn: corregir } : null);
     setImagenOverlay(overlay ? { fn: overlay } : null);
-    try {
-      const response = await fetch(`/mediciones/${estudioId}/imagen?clave=${encodeURIComponent(clave)}`);
-      if (!response.ok) throw new Error('No se pudo obtener la imagen');
-      const data = await response.json();
-      setImagenUrl(data.url);
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setLoadingImagen(false);
-    }
+    setImagenUrl(urlImagen(estudioId, clave));
   };
 
   const handleVerImagenesTabs = async (label: string, tabs: Array<{ clave: string; tabLabel: string; valor?: number | string }>, corregir?: (tab: number) => void, overlay?: (tab: number) => { puntos: Record<string, Pt | null>; rectas: Recta[] } | null) => {
@@ -270,49 +286,34 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
     setImagenOverlay(overlay ? { fn: overlay } : null);
     setImagenValores(null);
     setActiveTab(0);
-    setLoadingImagen(true);
-    setImagenUrl(null);
+    setImagenAbierta(true);
     const firstTab = tabs[0];
-    if (resultados?.imagenes && resultados.imagenes[firstTab.clave]) {
-      try {
-        const response = await fetch(`/mediciones/${estudioId}/imagen?clave=${encodeURIComponent(resultados.imagenes[firstTab.clave])}`);
-        if (!response.ok) throw new Error('No se pudo obtener la imagen');
-        const data = await response.json();
-        setImagenUrl(data.url);
-      } catch (err) {
-        console.error(err);
-      } finally {
-        setLoadingImagen(false);
-      }
-    } else {
-      setLoadingImagen(false);
-    }
+    setImagenUrl(resultados?.imagenes?.[firstTab.clave]
+      ? urlImagen(estudioId, resultados.imagenes[firstTab.clave])
+      : null);
   };
 
   const handleTabChange = async (tabIndex: number) => {
     if (!imagenTabs) return;
     setActiveTab(tabIndex);
-    setLoadingImagen(true);
     const tab = imagenTabs[tabIndex];
-    if (resultados?.imagenes && resultados.imagenes[tab.clave]) {
-      try {
-        const response = await fetch(`/mediciones/${estudioId}/imagen?clave=${encodeURIComponent(resultados.imagenes[tab.clave])}`);
-        if (!response.ok) throw new Error('No se pudo obtener la imagen');
-        const data = await response.json();
-        setImagenUrl(data.url);
-      } catch (err) {
-        console.error(err);
-      } finally {
-        setLoadingImagen(false);
-      }
-    } else {
-      setLoadingImagen(false);
-    }
+    setImagenUrl(resultados?.imagenes?.[tab.clave]
+      ? urlImagen(estudioId, resultados.imagenes[tab.clave])
+      : null);
   };
 
-  const cierreEditor = useCierreDeFondo(() => setEditorOpen(false));
+  // Cerrar descarta la imagen a proposito: al reabrir el mismo editor la url
+  // seria identica a la anterior, React descartaria el cambio y el <img> nunca
+  // volveria a disparar onLoad, dejando el velo de carga puesto para siempre.
+  const cerrarEditor = () => {
+    setEditorOpen(false)
+    setEditorImageUrl(null)
+  }
+
+  const cierreEditor = useCierreDeFondo(cerrarEditor);
 
   const handleCerrarImagen = () => {
+    setImagenAbierta(false);
     setImagenUrl(null);
     setImagenLabel('');
     setImagenValores(null);
@@ -611,13 +612,9 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
     setEditorOriginalAngulos(angulos)
     setEditorLoadingImage(true)
     setEditorImagenLista(false)
-    try {
-      const clave = resultados.imagenes?.[`angulo_centro_borde_anterior_${lado === 'der' ? 'derecho' : 'izquierdo'}`]
-      if (!clave) throw new Error()
-      const res = await fetch(`/mediciones/${estudioId}/imagen?clave=${encodeURIComponent(clave)}`)
-      setEditorImageUrl((await res.json()).url)
-    } catch { setEditorImageUrl(null) }
-    finally { setEditorLoadingImage(false) }
+    const clave = resultados.imagenes?.[`angulo_centro_borde_anterior_${lado === 'der' ? 'derecho' : 'izquierdo'}`]
+    setEditorImageUrl(clave ? urlImagen(estudioId, clave) : null)
+    if (!clave) setEditorLoadingImage(false)
     return true
   }
 
@@ -644,13 +641,9 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
     setEditorOriginalAngulos(angulos)
     setEditorLoadingImage(true)
     setEditorImagenLista(false)
-    try {
-      const clave = resultados.imagenes?.[`alfa_${hora}_${lado === 'der' ? 'derecho' : 'izquierdo'}`]
-      if (!clave) throw new Error()
-      const res = await fetch(`/mediciones/${estudioId}/imagen?clave=${encodeURIComponent(clave)}`)
-      setEditorImageUrl((await res.json()).url)
-    } catch { setEditorImageUrl(null) }
-    finally { setEditorLoadingImage(false) }
+    const clave = resultados.imagenes?.[`alfa_${hora}_${lado === 'der' ? 'derecho' : 'izquierdo'}`]
+    setEditorImageUrl(clave ? urlImagen(estudioId, clave) : null)
+    if (!clave) setEditorLoadingImage(false)
     return true
   }
 
@@ -711,15 +704,11 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
     setEditorImageUrl(null)
     setEditorImagenLista(false)
     setEditorSaveError(null)
-    try {
-      const clave = resultados.imagenes?.[
-        variante === 'inclinacion' ? 'inclinacion_acetabular' : 'angulo_centro_borde_lateral'
-      ]
-      if (!clave) throw new Error()
-      const res = await fetch(`/mediciones/${estudioId}/imagen?clave=${encodeURIComponent(clave)}`)
-      setEditorImageUrl((await res.json()).url)
-    } catch { setEditorImageUrl(null) }
-    finally { setEditorLoadingImage(false) }
+    const clave = resultados.imagenes?.[
+      variante === 'inclinacion' ? 'inclinacion_acetabular' : 'angulo_centro_borde_lateral'
+    ]
+    setEditorImageUrl(clave ? urlImagen(estudioId, clave) : null)
+    if (!clave) setEditorLoadingImage(false)
   }
 
   const handleOpenEditor = async (nivel: string, imageKey: string) => {
@@ -745,14 +734,9 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
     setEditorImageUrl(null)
     setEditorImagenLista(false)
     setEditorSaveError(null)
-    try {
-      const clave = resultados.imagenes?.[imageKey]
-      if (!clave) throw new Error()
-      const res = await fetch(`/mediciones/${estudioId}/imagen?clave=${encodeURIComponent(clave)}`)
-      const data = await res.json()
-      setEditorImageUrl(data.url)
-    } catch { setEditorImageUrl(null) }
-    finally { setEditorLoadingImage(false) }
+    const clave = resultados.imagenes?.[imageKey]
+    setEditorImageUrl(clave ? urlImagen(estudioId, clave) : null)
+    if (!clave) setEditorLoadingImage(false)
   }
 
   const handleEditorPointMouseDown = (key: string, e: React.MouseEvent) => {
@@ -836,7 +820,7 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
       })
       if (!res.ok) throw new Error('Error al guardar')
       setResultados(updated)
-      setEditorOpen(false)
+      cerrarEditor()
     } catch (err) {
       setEditorSaveError(err instanceof Error ? err.message : 'Error al guardar')
     } finally {
@@ -1221,7 +1205,7 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
     // Cambiar de estudio tiene que cerrar lo que este abierto: si no, el modal
     // de imagen o el editor quedarian mostrando datos del estudio anterior.
     handleCerrarImagen();
-    setEditorOpen(false);
+    cerrarEditor();
     if (!estudioId) { setResultados(null); return; }
     let cancelado = false;
     (async () => {
@@ -1247,7 +1231,7 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
       {renderResultados()}
 
       {/* Modal de imagen del angulo */}
-      {(imagenUrl || loadingImagen) && (
+      {imagenAbierta && (
         <div className="fixed inset-0 bg-black/75 flex items-center justify-center z-[70]" {...cierreImagen}>
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl mx-4 flex flex-col overflow-hidden">
             {/* Header */}
@@ -1339,21 +1323,15 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
 
             {/* Imagen */}
             <div className="relative p-4 bg-black flex items-center justify-center min-h-48">
-              {imagenUrl && (
+              {imagenUrl ? (
                 <ImagenConRectas
                   key={imagenUrl}
                   src={imagenUrl}
                   alt={imagenLabel}
                   overlay={imagenOverlay?.fn(activeTab) ?? null}
                 />
-              )}
-              {loadingImagen && (
-                <div className={`${imagenUrl ? 'absolute inset-0 bg-black/60' : ''} flex items-center justify-center`}>
-                  <svg className="animate-spin h-8 w-8 text-white" fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                  </svg>
-                </div>
+              ) : (
+                <p className="text-gray-400 text-sm">No se pudo cargar la imagen</p>
               )}
             </div>
           </div>
@@ -1370,7 +1348,7 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
                   <p className="text-xs font-semibold text-amber-600 uppercase tracking-wider mb-0.5">Corrección Manual</p>
                   <h3 className="text-base font-bold text-gray-900">{editorLabel}</h3>
                 </div>
-                <button onClick={() => setEditorOpen(false)} className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg">
+                <button onClick={cerrarEditor} className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg">
                   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
                   </svg>
@@ -1441,6 +1419,11 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
                             h: e.currentTarget.naturalHeight,
                           })
                           setEditorImagenLista(true)
+                          setEditorLoadingImage(false)
+                        }}
+                        onError={() => {
+                          setEditorImageUrl(null)
+                          setEditorLoadingImage(false)
                         }}
                       />
                       {/* SVG overlay — position absolute garantiza que cubre exactamente la imagen */}
@@ -1553,7 +1536,7 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
                     Restablecer
                   </button>
                   <button
-                    onClick={() => setEditorOpen(false)}
+                    onClick={cerrarEditor}
                     className="px-4 py-2 text-sm border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
                   >
                     Cancelar
