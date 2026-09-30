@@ -914,6 +914,26 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
 
     return (
       <div className="@container">
+
+        {/* El backend ya no aborta el estudio entero cuando falla un plano:
+            devuelve lo que pudo medir y anota el resto aca. Se avisa en vez de
+            mostrar la tabla incompleta sin explicacion. */}
+        {resultados.secciones_fallidas && Object.keys(resultados.secciones_fallidas).length > 0 && (
+          <div className="mb-5 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
+            <p className="text-sm font-semibold text-amber-900">
+              Algunas mediciones no se pudieron realizar
+            </p>
+            <ul className="mt-1.5 space-y-1">
+              {Object.entries(resultados.secciones_fallidas).map(([seccion, motivo]: [string, any]) => (
+                <li key={seccion} className="text-xs text-amber-800">
+                  <span className="font-medium capitalize">{seccion.replace(/_/g, ' ')}</span>
+                  <span className="text-amber-700"> — {String(motivo)}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
       <div className="grid grid-cols-1 @5xl:grid-cols-2 gap-5">
 
         {/* Angulos Coronales */}
@@ -1152,10 +1172,10 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
                 {Object.entries(resultados.angulos_alfa).map(([hora, val]: [string, any]) => (
                   <tr key={hora}>
                     <td className="px-4 py-2 text-gray-700 capitalize whitespace-nowrap">{hora.replace('_', ' ')}</td>
-                    <td className={tdNum}>{val.izq?.anterior}°</td>
-                    <td className={tdNum}>{val.izq?.posterior}°</td>
-                    <td className={tdNum}>{val.der?.anterior}°</td>
-                    <td className={tdNum}>{val.der?.posterior}°</td>
+                    <td className={tdNum}>{val.izq ? `${val.izq.anterior}°` : '—'}</td>
+                    <td className={tdNum}>{val.izq ? `${val.izq.posterior}°` : '—'}</td>
+                    <td className={tdNum}>{val.der ? `${val.der.anterior}°` : '—'}</td>
+                    <td className={tdNum}>{val.der ? `${val.der.posterior}°` : '—'}</td>
                     <td className={tdAcc}>
                       <div className="flex items-center justify-center gap-1">
                         <OjoBtnTabs
