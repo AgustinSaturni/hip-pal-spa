@@ -49,6 +49,15 @@ const allAngleIds = angleGroups.flatMap((g) => g.angles.map((a) => a.id));
 // castigar al backend.
 const INTERVALO_REFRESCO_MS = 5000;
 
+// Terminos que suelen identificar una reconstruccion osea en la descripcion de
+// la serie. 'standar' sin la d final entra tambien en 'standard'.
+const TERMINOS_OSEOS = ['bone', 'hueso', 'std', 'standar'];
+
+const pareceOsea = (descripcion: string) => {
+  const d = descripcion.toLowerCase();
+  return TERMINOS_OSEOS.some((t) => d.includes(t));
+};
+
 export default function AppShell() {
   const [searchName, setSearchName] = useState('');
   const [patients, setPatients] = useState<Patient[]>([]);
@@ -59,6 +68,17 @@ export default function AppShell() {
 
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
   const [series, setSeries] = useState<Series[]>([]);
+  // El filtro por descripcion es una ayuda, no una regla: las series que no
+  // parecen oseas se esconden pero se avisa cuantas y se pueden mostrar igual.
+  // Antes se descartaban al cargarlas y el paciente podia quedar sin ninguna
+  // serie visible, sin forma de saber que habia sido el filtro.
+  const [mostrarTodasLasSeries, setMostrarTodasLasSeries] = useState(false);
+  const seriesOseas = series.filter((s) => pareceOsea(s.description));
+  // Si ninguna parece osea se muestran todas igual: esconderlas todas dejaba la
+  // pantalla vacia, que es peor que mostrar de mas.
+  const sinCoincidencias = series.length > 0 && seriesOseas.length === 0;
+  const seriesVisibles = mostrarTodasLasSeries || sinCoincidencias ? series : seriesOseas;
+  const seriesOcultas = series.length - seriesVisibles.length;
   const [loadingSeries, setLoadingSeries] = useState(false);
   const [seriesError, setSeriesError] = useState<string | null>(null);
 
@@ -128,11 +148,8 @@ export default function AppShell() {
       }
 
       const data: SeriesResponse = await response.json();
-      const filteredSeries = data.series.filter((s) => {
-        const desc = s.description.toLowerCase();
-        return desc.includes('bone') || desc.includes('hueso');
-      });
-      setSeries(filteredSeries);
+      setSeries(data.series);
+      setMostrarTodasLasSeries(false);
     } catch (err) {
       setSeriesError(err instanceof Error ? err.message : 'Error desconocido');
       setSeries([]);
@@ -660,6 +677,24 @@ export default function AppShell() {
                         <p className="text-gray-500">Cargando series...</p>
                       </div>
                     ) : (
+                      <>
+                      {(seriesOcultas > 0 || sinCoincidencias) && (
+                        <div className="mx-6 mt-4 flex items-center justify-between gap-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-2">
+                          <p className="text-xs text-amber-800">
+                            {sinCoincidencias
+                              ? 'Ninguna serie parece ser una reconstrucción ósea; se muestran todas.'
+                              : `Se ${seriesOcultas === 1 ? 'ocultó' : 'ocultaron'} ${seriesOcultas} ${seriesOcultas === 1 ? 'serie que no parece ósea' : 'series que no parecen óseas'}.`}
+                          </p>
+                          {!sinCoincidencias && (
+                            <button
+                              onClick={() => setMostrarTodasLasSeries(!mostrarTodasLasSeries)}
+                              className="shrink-0 text-xs font-medium text-amber-900 underline hover:no-underline"
+                            >
+                              {mostrarTodasLasSeries ? 'Ocultarlas' : 'Mostrarlas igual'}
+                            </button>
+                          )}
+                        </div>
+                      )}
                       <table className="min-w-full divide-y divide-gray-200">
                         <thead className="bg-gray-50">
                           <tr>
@@ -681,8 +716,8 @@ export default function AppShell() {
                           </tr>
                         </thead>
                         <tbody className="bg-white divide-y divide-gray-200">
-                          {series.length > 0 ? (
-                            series.map((seriesItem) => (
+                          {seriesVisibles.length > 0 ? (
+                            seriesVisibles.map((seriesItem) => (
                               <tr
                                 key={seriesItem.uuid}
                                 onClick={() => handleSeriesClick(seriesItem)}
@@ -738,6 +773,7 @@ export default function AppShell() {
                           )}
                         </tbody>
                       </table>
+                      </>
                     )}
                   </>
                 ) : !analysisSuccess ? (
@@ -815,7 +851,7 @@ export default function AppShell() {
               <div className="px-6 py-3 border-t border-gray-200 flex items-center justify-between">
                 {!selectedSeries ? (
                   <span className="text-sm text-gray-500">
-                    {series.length} {series.length === 1 ? 'serie' : 'series'}
+                    {seriesVisibles.length} {seriesVisibles.length === 1 ? 'serie' : 'series'}
                   </span>
                 ) : !analysisSuccess ? (
                   <>
