@@ -97,8 +97,8 @@ export default function VisorDicom({
 
         <div
           ref={contenedorRef}
-          className="bg-black flex items-center justify-center relative"
-          style={{ minHeight: 520 }}
+          className="bg-black flex items-center justify-center relative flex-1 min-h-0"
+          style={{ minHeight: 320, maxHeight: '72vh' }}
           onWheel={(e) => {
             if (!instancias.length) return;
             setIdx((i) => Math.min(instancias.length - 1, Math.max(0, i + (e.deltaY > 0 ? 1 : -1))));
@@ -119,7 +119,12 @@ export default function VisorDicom({
                 alt={`Corte ${idx + 1}`}
                 draggable={false}
                 onLoad={() => setPrimerCorteListo(true)}
-                style={{ height: '72vh', width: 'auto', maxWidth: '100%', display: 'block' }}
+                /* object-contain en vez de alto fijo: los cortes de TC son
+                   cuadrados, pero las capturas de estacion vienen apaisadas o
+                   mas altas que anchas. Con alto fijo esas se salian del modal,
+                   que recorta por overflow-hidden, y como su anatomia suele
+                   estar en la mitad de abajo quedaba a la vista solo el negro. */
+                style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }}
               />
               {!primerCorteListo && (
                 <p className="absolute text-gray-400 text-sm">Cargando corte...</p>
