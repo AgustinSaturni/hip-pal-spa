@@ -30,3 +30,39 @@ body {
   from { opacity: 0; transform: translateX(1rem); }
   to   { opacity: 1; transform: translateX(0); }
 }
+
+/* --- Reporte imprimible ---
+   En pantalla no existe; al imprimir es lo unico que queda. El contenedor se
+   monta en un portal como hijo directo de <body>, asi que esconder a sus
+   hermanos alcanza para sacar sidebar, topbar, modales y avisos de una. */
+#reporte-impresion {
+  display: none;
+}
+
+@page {
+  size: A4 portrait;
+  margin: 12mm;
+}
+
+@media print {
+  html,
+  body {
+    background: #fff !important;
+    margin: 0 !important;
+  }
+
+  body > *:not(#reporte-impresion) {
+    display: none !important;
+  }
+
+  #reporte-impresion {
+    display: block !important;
+    background: #fff;
+    color: #0f172a;
+    font-family: Arial, Helvetica, sans-serif;
+    /* Las rectas de los angulos y el fondo negro del corte son el dato, no
+       decoracion: sin esto el navegador los descarta para ahorrar tinta. */
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+}

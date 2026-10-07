@@ -1,8 +1,13 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useCierreDeFondo } from './useCierreDeFondo';
+import ReportePdf, { armarItemsImpresion } from './ReportePdf';
+import {
+  Pt, Recta, OverlayRectas,
+  RECTAS_AXIAL, RECTAS_SAGITAL, RECTAS_CORONAL_LATERAL, RECTAS_CORONAL_INCLINACION, RECTAS_ALFA,
+} from './rectas';
 
 // Muestra y permite corregir los resultados de una medicion: las tablas de
 // angulos, el modal de imagenes y el editor de puntos sobre la imagen. Se
@@ -22,71 +27,6 @@ function Spinner({ className = 'h-8 w-8' }: { className?: string }) {
   )
 }
 
-type Recta = { from: string; to: string; color: string; extend?: number }
-
-// Las rectas de los angulos axiales. El editor las hace arrastrables; el modal
-// de visualizacion las dibuja igual pero sin handles.
-const RECTAS_AXIAL: Recta[] = [
-  { from: 'centroide_der', to: 'aasa_der', color: '#ef4444' },
-  { from: 'centroide_der', to: 'pasa_der', color: '#3b82f6' },
-  { from: 'centroide_izq', to: 'aasa_izq', color: '#ef4444' },
-  { from: 'centroide_izq', to: 'pasa_izq', color: '#3b82f6' },
-]
-
-// La recta del centro-borde anterior. El backend la dibujaba extendida al
-// doble, asi que el overlay hace lo mismo para caer donde estaba.
-const RECTAS_SAGITAL: Recta[] = [
-  { from: 'centroide', to: 'punto_filo', color: '#ef4444', extend: 2 },
-]
-
-// Coronal hornea dos imagenes distintas que comparten los mismos puntos: una
-// por angulo.
-const RECTAS_CORONAL_LATERAL: Recta[] = [
-  { from: 'centroide_der', to: 'filo_superior_der', color: '#ef4444' },
-  { from: 'centroide_izq', to: 'filo_superior_izq', color: '#ef4444' },
-]
-const RECTAS_CORONAL_INCLINACION: Recta[] = [
-  { from: 'filo_inferior_der', to: 'filo_superior_der', color: '#eab308' },
-  { from: 'filo_inferior_izq', to: 'filo_superior_izq', color: '#eab308' },
-]
-
-// Alfa: los colores horneados se invertian segun el lado; el overlay usa
-// siempre rojo = anterior y verde = posterior, que es mas legible.
-const RECTAS_ALFA: Recta[] = [
-  { from: 'centroide', to: 'punto_horario', color: '#ef4444' },
-  { from: 'centroide', to: 'punto_antihorario', color: '#22c55e' },
-  { from: 'centroide', to: 'punto_bisectriz', color: '#3b82f6' },
-]
-
-// Overlay de solo lectura sobre una imagen ya renderizada. Desde que el backend
-// dejo de hornear las rectas en el PNG, esta es la unica forma de verlas fuera
-// del editor. pointer-events none para no comerse los clicks del modal.
-function OverlayRectas({ puntos, rectas }: { puntos: Record<string, { x: number; y: number } | null>; rectas: Recta[] }) {
-  return (
-    <svg
-      style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none' }}
-      viewBox="0 0 100 100"
-      preserveAspectRatio="none"
-    >
-      {rectas.map(({ from, to, color, extend }) => {
-        const c = puntos[from]
-        const q = puntos[to]
-        if (!c || !q) return null
-        const k = extend ?? 1
-        return (
-          <line
-            key={`${from}-${to}`}
-            x1={c.x * 100} y1={c.y * 100}
-            x2={(c.x + (q.x - c.x) * k) * 100} y2={(c.y + (q.y - c.y) * k) * 100}
-            stroke={color}
-            strokeWidth="0.6"
-            opacity="0.9"
-          />
-        )
-      })}
-    </svg>
-  )
-}
 
 /**
  * Imagen del modal de visualizacion con sus rectas encima.
@@ -215,11 +155,32 @@ function MenuAcciones({ opciones }: { opciones: Array<{ label: string; onClick: 
   );
 }
 
-export default function ResultadosMedicion({ estudioId }: { estudioId: number | null }) {
+export default function ResultadosMedicion({
+  estudioId, paciente = '', fecha = null, descripcion = null, onImprimirListo,
+}: {
+  estudioId: number | null
+  /** Datos de cabecera del reporte impreso; los tiene el contenedor. */
+  paciente?: string
+  fecha?: string | null
+  descripcion?: string | null
+  /**
+   * Entrega el disparador de impresion al contenedor, que es el que dibuja el
+   * boton (va al lado del tacho, en la barra del reporte). Los resultados y las
+   * imagenes viven aca adentro, asi que el boton de afuera no puede armar el
+   * documento por su cuenta.
+   */
+  onImprimirListo?: (fn: (() => void) | null) => void
+}) {
   const [resultados, setResultados] = useState<any>(null);
   const [loadingResultados, setLoadingResultados] = useState(false);
   const [resultadosError, setResultadosError] = useState<string | null>(null);
 
+  // --- Impresion ---
+  // El documento imprimible se monta una vez y se queda: esta oculto, no
+  // molesta, y asi una segunda impresion no vuelve a bajar las 19 imagenes.
+  const [montarImpresion, setMontarImpresion] = useState(false);
+  const [preparandoImpresion, setPreparandoImpresion] = useState(false);
+  const [imagenesImpresionListas, setImagenesImpresionListas] = useState(0);
 
   const [imagenUrl, setImagenUrl] = useState<string | null>(null);
   // Si la imagen esta cargando lo sabe ImagenConRectas, que se remonta con
@@ -335,7 +296,6 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
   const cierreImagen = useCierreDeFondo(handleCerrarImagen);
 
   // ---- Editor SVG ----
-  type Pt = { x: number; y: number }
   type Dims = { w: number; h: number }
 
   // Las coordenadas se guardan normalizadas [0,1]. Hay que desnormalizarlas con
@@ -1226,6 +1186,11 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
     // de imagen o el editor quedarian mostrando datos del estudio anterior.
     handleCerrarImagen();
     cerrarEditor();
+    // El documento imprimible queda con las imagenes del estudio anterior, y
+    // sus urls cambian: hay que desmontarlo y volver a contar las cargas.
+    setMontarImpresion(false);
+    setPreparandoImpresion(false);
+    setImagenesImpresionListas(0);
     if (!estudioId) { setResultados(null); return; }
     let cancelado = false;
     (async () => {
@@ -1246,9 +1211,89 @@ export default function ResultadosMedicion({ estudioId }: { estudioId: number | 
     return () => { cancelado = true; };
   }, [estudioId]);
 
+  // --- Impresion ---
+
+  const itemsImpresion = useMemo(
+    () => armarItemsImpresion(resultados, (clave: string) => urlImagen(estudioId, clave)),
+    [resultados, estudioId],
+  );
+
+  const imprimirReporte = useCallback(() => {
+    setMontarImpresion(true);
+    setPreparandoImpresion(true);
+  }, []);
+
+  // El boton vive en la barra del reporte, que la dibuja el contenedor. Se le
+  // pasa null mientras no haya resultados para que no muestre el boton.
+  useEffect(() => {
+    onImprimirListo?.(resultados ? imprimirReporte : null);
+    return () => onImprimirListo?.(null);
+  }, [onImprimirListo, resultados, imprimirReporte]);
+
+  // window.print() congela la pagina tal como esta: una imagen a medio bajar
+  // sale en blanco y no hay forma de enterarse despues. Por eso se espera a que
+  // las 19 hayan disparado load (o error) antes de abrir el dialogo.
+  useEffect(() => {
+    if (!preparandoImpresion || !montarImpresion) return;
+
+    const lanzar = () => {
+      setPreparandoImpresion(false);
+      // Un tick para que React saque el velo de "preparando" antes de que
+      // window.print() congele la pagina: si no, queda abajo del dialogo
+      // hasta que el usuario lo cierra.
+      setTimeout(() => window.print(), 0);
+    };
+
+    if (imagenesImpresionListas >= itemsImpresion.length) {
+      // Un frame de gracia para que el navegador aplique el layout de
+      // impresion antes de medir: recien ahi el contenedor deja de ser
+      // display:none y las imagenes tienen alto.
+      const frame = requestAnimationFrame(lanzar);
+      return () => cancelAnimationFrame(frame);
+    }
+
+    // Si MinIO no contesta por una imagen, imprimir lo que haya en vez de
+    // dejar el boton girando para siempre.
+    const timeout = window.setTimeout(lanzar, 20000);
+    return () => window.clearTimeout(timeout);
+  }, [preparandoImpresion, montarImpresion, imagenesImpresionListas, itemsImpresion.length]);
+
   return (
     <>
       {renderResultados()}
+
+      {/* Documento imprimible. Portal a <body> para que el CSS de impresion
+          pueda esconder a sus hermanos de un saque, y porque dentro del arbol
+          del reporte heredaria overflow y transforms que rompen la paginacion. */}
+      {montarImpresion && createPortal(
+        <ReportePdf
+          resultados={resultados}
+          items={itemsImpresion}
+          paciente={paciente}
+          fecha={fecha}
+          descripcion={descripcion}
+          estudioId={estudioId}
+          onImagenLista={() => setImagenesImpresionListas((n) => n + 1)}
+        />,
+        document.body,
+      )}
+
+      {preparandoImpresion && (
+        <div className="fixed inset-0 z-[120] bg-black/40 flex items-center justify-center">
+          <div className="bg-white rounded-xl shadow-2xl px-6 py-5 flex items-center gap-3">
+            <svg className="animate-spin w-5 h-5 text-blue-600" fill="none" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+            </svg>
+            <div>
+              <p className="text-sm font-semibold text-gray-900">Preparando el reporte</p>
+              <p className="text-xs text-gray-500">
+                Cargando imágenes {Math.min(imagenesImpresionListas, itemsImpresion.length)} de {itemsImpresion.length}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Modal de imagen del angulo */}
       {imagenAbierta && (

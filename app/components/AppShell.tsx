@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Patient, SearchResponse, Series, SeriesResponse } from '../types';
 import VisorDicom from './VisorDicom';
 import ResultadosMedicion from './ResultadosMedicion';
@@ -127,6 +127,15 @@ export default function AppShell() {
   const [estudiosError, setEstudiosError] = useState<string | null>(null);
   const [deletingEstudioId, setDeletingEstudioId] = useState<number | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
+  // Disparador de impresion del reporte. Lo arma ResultadosMedicion, que es
+  // quien tiene los angulos y las imagenes; aca solo se dibuja el boton. El
+  // envoltorio { fn } es para que setState no confunda la funcion con un
+  // updater.
+  const [imprimirReporte, setImprimirReporte] = useState<{ fn: () => void } | null>(null);
+  const registrarImpresion = useCallback(
+    (fn: (() => void) | null) => setImprimirReporte(fn ? { fn } : null),
+    [],
+  );
 
   const [resultadosEstudioId, setResultadosEstudioId] = useState<number | null>(null);
 
@@ -446,25 +455,38 @@ export default function AppShell() {
           </p>
         </div>
 
-        {estudioActual && estudioActual.estado !== 'Procesando' && (
-          <button
-            onClick={() => setConfirmDeleteId(estudioActual.estudio_id)}
-            disabled={deletingEstudioId === estudioActual.estudio_id}
-            title="Eliminar estudio"
-            className="ml-auto shrink-0 p-1.5 text-gray-300 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors disabled:text-gray-200"
-          >
-            {deletingEstudioId === estudioActual.estudio_id ? (
-              <svg className="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-              </svg>
-            ) : (
+        <div className="ml-auto shrink-0 flex items-center gap-1">
+          {imprimirReporte && (
+            <button
+              onClick={imprimirReporte.fn}
+              title="Imprimir reporte (PDF)"
+              className="shrink-0 p-1.5 text-gray-300 hover:text-blue-600 hover:bg-blue-50 rounded-md transition-colors"
+            >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" />
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6.72 13.829c-.24.03-.48.062-.72.096m.72-.096a42.415 42.415 0 0 1 10.56 0m-10.56 0L6.34 18m10.94-4.171c.24.03.48.062.72.096m-.72-.096L17.66 18m0 0 .229 2.523a1.125 1.125 0 0 1-1.12 1.227H7.231c-.662 0-1.18-.568-1.12-1.227L6.34 18m11.318 0h1.091A2.25 2.25 0 0 0 21 15.75V9.456c0-1.081-.768-2.015-1.837-2.175a48.055 48.055 0 0 0-1.913-.247M6.34 18H5.25A2.25 2.25 0 0 1 3 15.75V9.456c0-1.081.768-2.015 1.837-2.175a48.041 48.041 0 0 1 1.913-.247m10.5 0a48.536 48.536 0 0 0-10.5 0m10.5 0V3.375c0-.621-.504-1.125-1.125-1.125h-8.25c-.621 0-1.125.504-1.125 1.125v3.659M18 10.5h.008v.008H18V10.5Zm-3 0h.008v.008H15V10.5Z" />
               </svg>
-            )}
-          </button>
-        )}
+            </button>
+          )}
+          {estudioActual && estudioActual.estado !== 'Procesando' && (
+            <button
+              onClick={() => setConfirmDeleteId(estudioActual.estudio_id)}
+              disabled={deletingEstudioId === estudioActual.estudio_id}
+              title="Eliminar estudio"
+              className="shrink-0 p-1.5 text-gray-300 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors disabled:text-gray-200"
+            >
+              {deletingEstudioId === estudioActual.estudio_id ? (
+                <svg className="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                </svg>
+              ) : (
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" />
+                </svg>
+              )}
+            </button>
+          )}
+        </div>
       </div>
 
       {estudiosError && (
@@ -473,7 +495,13 @@ export default function AppShell() {
         </div>
       )}
 
-      <ResultadosMedicion estudioId={resultadosEstudioId!} />
+      <ResultadosMedicion
+        estudioId={resultadosEstudioId!}
+        paciente={formatPatientName(medicionesPatient.patient_name)}
+        fecha={fmtFecha(estudioActual?.created_at)}
+        descripcion={estudioActual?.descripcion}
+        onImprimirListo={registrarImpresion}
+      />
 
       {confirmDeleteId !== null && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[80]" {...cierreConfirmar}>
